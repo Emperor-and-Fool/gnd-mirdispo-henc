@@ -201,6 +201,11 @@ the Flatpak from `flatpak/io.github.hencyber.Mirdispo.yml`, signs it, and adds
 it to the Flatpak repository on GitHub Pages, which is where installed copies
 get their updates. The repository keeps the two latest versions.
 
+Attach the `.deb` from `packaging/build-deb.sh` and the archive from
+`packaging/build-flatpak-sources.sh` to each release. The archive holds the
+source of every library the Flatpak bundles, which their licences require to
+be offered with it.
+
 Signing needs two repository secrets: `FLATPAK_GPG_PRIVATE_KEY`, the armoured
 private key, and `FLATPAK_GPG_KEY_ID`, its fingerprint. The public half is
 `flatpak/mirdispo-repo.gpg`, and the install files hand it to everyone who
