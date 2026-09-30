@@ -43,11 +43,11 @@ ${builder} --user --install-deps-from=flathub --disable-rofiles-fuse --force-cle
     "${sign[@]}" --repo="${site}/repo" \
     "${project_root}/work/flatpak-publish" "${project_root}/flatpak/${app_id}.yml"
 
-# Two versions are kept, so an update can be served as a small delta and a
-# broken release can still be rolled back from, without the site growing
-# with every release.
+# Two versions are kept, the current one and its parent, so an update can be
+# served as a small delta and a broken release rolled back from, without the
+# site growing with every release.
 flatpak build-update-repo "${sign[@]}" --title="Mirdispo" --default-branch=stable \
-    --generate-static-deltas --prune --prune-depth=2 "${site}/repo"
+    --generate-static-deltas --prune --prune-depth=1 "${site}/repo"
 
 # The install files carry the public key, so installing needs no step
 # beyond opening one of them.
