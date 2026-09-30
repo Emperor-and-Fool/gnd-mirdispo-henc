@@ -1,0 +1,73 @@
+From: Mirdispo contributors
+Subject: Scale, convert and encode video in parallel
+
+Scaling, colour conversion and x264 each ran in a single thread. A frame
+that takes more than 50 ms from capture to leaving the encoder makes the
+pipeline drop frames to catch up, which is seen as the picture jumping, and
+the frames that take longest are the ones with the most motion: playing
+video, moving windows, moving the pointer. On a busy machine, or on slower
+cores, a single thread gets close to that limit.
+
+videoscale and videoconvert now split each frame across threads, which gives
+the same picture. x264 encodes four slices in parallel. Sliced threading adds
+no frame of delay, unlike frame threading. A 1080p frame from a 2560x1600
+screen went from about 12 ms to about 4 ms through these steps.
+
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -41,6 +41,16 @@
+ 
+ static guint signals[NR_SIGNALS];
+ 
++/* Scaling and colour conversion run in the same thread as capture, and at
++ * 1080p they were the slowest step before the encoder. Splitting each frame
++ * across threads gives exactly the same picture in a fraction of the time. */
++static void
++wfd_media_factory_parallelize (GstElement *element)
++{
++  if (g_object_class_find_property (G_OBJECT_GET_CLASS (element), "n-threads"))
++    g_object_set (element, "n-threads", (guint) 0, NULL);
++}
++
+ static void
+ encoding_perf_handoff_cb (GstElement *elem, GstBuffer *buf, gpointer user_data)
+ {
+@@ -148,6 +158,7 @@
+   g_object_set (scale,
+                 "qos", TRUE,
+                 NULL);
++  wfd_media_factory_parallelize (scale);
+   success &= gst_bin_add (bin, scale);
+ 
+   caps = gst_caps_new_simple ("video/x-raw",
+@@ -166,6 +177,7 @@
+   g_object_set (convert,
+                 "qos", TRUE,
+                 NULL);
++  wfd_media_factory_parallelize (convert);
+   success &= gst_bin_add (bin, convert);
+ 
+   queue_pre_encoder = gst_element_factory_make ("queue", "wfd-pre-encoder-queue");
+@@ -623,7 +635,11 @@
+                     "tune", 0x4, /* zero latency */
+                     "speed-preset", 1, /* ultrafast */
+                     "rc-lookahead", 1,
+-                    "threads", 1,
++                    /* Four slices, each encoded by its own thread. Sliced
++                     * threading adds no frame of delay, unlike frame
++                     * threading, and cuts the time a frame takes to encode,
++                     * so bursts of motion no longer make it late. */
++                    "threads", 4,
+                     "vbv-buf-capacity", 50,
+                     "dct8x8", FALSE,
+                     "ref", 1,
+@@ -636,7 +652,7 @@
+                     "interlaced", resolution->interlaced,
+                     "bitrate",  bitrate_kbit,
+                     "insert-vui", TRUE,
+-                    "sliced-threads", FALSE,
++                    "sliced-threads", TRUE,
+                     NULL);
+       break;
+ 

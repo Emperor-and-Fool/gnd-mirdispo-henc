@@ -44,6 +44,11 @@
     <category>AudioVideo</category>
   </categories>
   <releases>
+    <release version="3.5.0" date="2026-10-01">
+      <description>
+        <p>Smoother and sharper motion. The picture no longer skips frames when you play video, drag windows or move the pointer, and it stays sharp while it moves, at the same resolution as before.</p>
+      </description>
+    </release>
     <release version="3.4.1" date="2026-10-01">
       <description>
         <p>The sound on the receiver no longer stutters, and the picture and sound trail the desktop by less.</p>

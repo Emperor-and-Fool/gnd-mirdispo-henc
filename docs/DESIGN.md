@@ -94,6 +94,22 @@ the cast ends (patch 0015). The sound is captured in 40 ms periods (patch
 short for the capture and the players to keep up with, and the receiver's
 sound stuttered.
 
+## Motion
+
+A receiver's highest frame rate at a given resolution is a hard limit. Many
+televisions take 1080p at 30 frames per second only, so motion there can never
+be as smooth as on a 120 Hz laptop screen without a lower resolution, which
+Mirdispo does not choose on the user's behalf. Within that limit:
+
+- Scaling, colour conversion and x264 run in parallel (patch 0018). x264
+  encodes four slices in parallel, which adds no frame of delay.
+- A frame that leaves the encoder too late makes the pipeline drop frames to
+  catch up, which is seen as the picture jumping. With x264 that happens only
+  from 100 ms after capture, since packets are sent 150 ms after capture
+  anyway (patch 0019). Dropped frames are reported in the journal.
+- The bitrate is capped at 10 Mbit/s rather than 4 (patch 0020), so a moving
+  1080p picture does not smear.
+
 ## Delay
 
 Every packet leaves a fixed pipeline latency after it was captured, so that

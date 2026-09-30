@@ -233,6 +233,9 @@ modules:
           - ../packaging/patches/0015-send-the-desktop-sound-to-the-receiver.patch
           - ../packaging/patches/0016-capture-sound-in-larger-periods.patch
           - ../packaging/patches/0017-shorter-latency-with-x264.patch
+          - ../packaging/patches/0018-encode-video-in-parallel.patch
+          - ../packaging/patches/0019-drop-frames-only-when-they-would-be-late.patch
+          - ../packaging/patches/0020-raise-the-video-bitrate-limit.patch
 
   - name: mirdispo
     buildsystem: simple

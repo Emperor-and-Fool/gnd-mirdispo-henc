@@ -1,0 +1,33 @@
+From: Mirdispo contributors
+Subject: Raise the video bitrate limit to 10 Mbit/s
+
+The video bitrate was capped at 4 Mbit/s, meant to keep the Wi-Fi link from
+saturating. For a 1080p picture that is little: whenever much of the screen
+moves, as when playing video or dragging a window, x264 has to quantise so
+hard that the picture smears and turns blocky.
+
+The cap is now 10 Mbit/s. That is below the lowest maximum a receiver can
+announce (14 Mbit/s for level 3.1) and small next to what a Wi-Fi link
+carries, and the receiver's own announced maximum still applies when it is
+lower.
+
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -612,10 +612,12 @@
+   guint gop_size = resolution->refresh_rate;
+   guint bitrate_kbit = wfd_video_codec_get_max_bitrate_kbit (codec);
+ 
+-  /* Limit initial video bitrate to 512kBit/s to ensure we don't
+-   * saturate the wifi link.
+-   * This is a rather bad method, but it kind of works. */
+-  bitrate_kbit = MIN (bitrate_kbit, 512 * 8);
++  /* Limit the video bitrate to stay well clear of what the Wi-Fi link can
++   * carry. This used to be 4 Mbit/s, which leaves a 1080p picture smeared
++   * and blocky whenever much of it moves. 10 Mbit/s is below the lowest
++   * maximum a receiver can announce (14 Mbit/s) and small next to what a
++   * Wi-Fi link carries. */
++  bitrate_kbit = MIN (bitrate_kbit, 10 * 1024);
+ 
+   if (resolution->interlaced)
+     g_warning ("Resolution should never be set to interlaced as that is not supported with all codecs.");

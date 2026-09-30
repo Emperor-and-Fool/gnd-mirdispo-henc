@@ -1,0 +1,139 @@
+From: Mirdispo contributors
+Subject: Drop frames only when they would be late, and say when it happens
+
+A frame more than 50 ms from capture when it leaves the encoder made the
+pipeline drop the frames after it, which is seen as the picture jumping.
+With x264 the pipeline latency is 150 ms (patch 0017), so every packet is
+sent that long after capture, and a frame 100 ms after capture is still in
+time. Dropping at 50 ms threw away frames that would have arrived on time.
+
+With x264 frames are now dropped from 100 ms. The other encoders keep 50 ms.
+
+When frames are dropped, a message says how many of how many in the last
+10 s and how long the slowest took, so that a stuttering picture can be told
+apart from a slow receiver or link.
+
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -30,9 +30,22 @@
+ 
+ typedef struct
+ {
+-  GstSegment *segment;
++  GstSegment      *segment;
++
++  /* How late a frame may leave the encoder before later frames are dropped
++   * to catch up. Frames are only sent once the pipeline latency has passed,
++   * so a frame within that is still on time. */
++  GstClockTime     budget;
++
++  /* What was captured and what was encoded, to report dropped frames. */
++  gint             frames_in;
++  guint            frames_out;
++  GstClockTimeDiff worst_late;
++  GstClockTime     report_at;
+ } QOSData;
+ 
++#define WFD_QOS_REPORT_INTERVAL (10 * GST_SECOND)
++
+ enum {
+   SIGNAL_CREATE_SOURCE,
+   SIGNAL_CREATE_AUDIO_SOURCE,
+@@ -78,20 +91,46 @@
+       late = MAX (0, now - pts);
+ 
+       /* Ignore the first few frames. */
+-      if (pts > 100 * GST_MSECOND && (late - 50 * GST_MSECOND >= 0 || -(late - 50 * GST_MSECOND) <= pts))
++      if (pts > 100 * GST_MSECOND && (late - (GstClockTimeDiff) qos_data->budget >= 0 ||
++                                      -(late - (GstClockTimeDiff) qos_data->budget) <= pts))
+         {
+-          /* We stop accepting things at more than 50ms delay;
+-           * Just use late / 50ms for the long term proportion. */
+-          proportion = late / (gdouble) (50 * GST_MSECOND);
++          /* We stop accepting things beyond the budget;
++           * Just use late / budget for the long term proportion. */
++          proportion = late / (gdouble) qos_data->budget;
+ 
+           /* g_debug ("Sending QOS event with proportion %.2f", proportion); */
+           qos_event = gst_event_new_qos (GST_QOS_TYPE_UNDERFLOW,
+                                          proportion,
+-                                         late - 50 * GST_MSECOND,
++                                         late - (GstClockTimeDiff) qos_data->budget,
+                                          pts);
+ 
+           gst_element_send_event (elem, qos_event);
+         }
++
++      /* Dropped frames are what makes the picture jump. Say so, so that a
++       * stuttering picture can be told apart from a slow receiver or link. */
++      qos_data->frames_out++;
++      qos_data->worst_late = MAX (qos_data->worst_late, late);
++      if (qos_data->report_at == 0)
++        {
++          qos_data->report_at = now + WFD_QOS_REPORT_INTERVAL;
++        }
++      else if (now >= qos_data->report_at)
++        {
++          gint captured = g_atomic_int_exchange (&qos_data->frames_in, 0);
++
++          /* A couple of frames are always on their way through. */
++          if (captured > (gint) qos_data->frames_out + 2)
++            g_message ("WfdMediaFactory: %d of %d frames in the last %d s were dropped to keep up; "
++                       "the slowest took %" G_GINT64_FORMAT " ms",
++                       captured - (gint) qos_data->frames_out, captured,
++                       (gint) (WFD_QOS_REPORT_INTERVAL / GST_SECOND),
++                       qos_data->worst_late / GST_MSECOND);
++
++          qos_data->frames_out = 0;
++          qos_data->worst_late = 0;
++          qos_data->report_at = now + WFD_QOS_REPORT_INTERVAL;
++        }
+     }
+ }
+ 
+@@ -120,6 +159,18 @@
+   return GST_PAD_PROBE_OK;
+ }
+ 
++static GstPadProbeReturn
++count_captured_frame_cb (GstPad          *pad,
++                         GstPadProbeInfo *info,
++                         gpointer         user_data)
++{
++  QOSData *qos_data = user_data;
++
++  g_atomic_int_inc (&qos_data->frames_in);
++
++  return GST_PAD_PROBE_OK;
++}
++
+ static void
+ free_qos_data (QOSData *qos_data)
+ {
+@@ -132,6 +183,7 @@
+ {
+   g_autoptr(GstCaps) caps = NULL;
+   g_autoptr(GstPad) encoding_perf_sink = NULL;
++  g_autoptr(GstPad) source_src = NULL;
+   g_autoptr(GstElement) source = NULL;
+ 
+   QOSData *qos_data;
+@@ -288,7 +340,17 @@
+   encoding_perf = gst_element_factory_make ("identity", "wfd-measure-encoder-realtime");
+   success &= gst_bin_add (bin, encoding_perf);
+   qos_data = g_new0 (QOSData, 1);
++  /* x264 runs with zero latency tuning and a 150 ms pipeline latency, so a
++   * frame 100 ms after capture is still sent in time. The other encoders
++   * keep the 50 ms they had. */
++  if (wfd_media_factory_profiles[self->factory_profile].video_encoder == ELEMENT_X264)
++    qos_data->budget = 100 * GST_MSECOND;
++  else
++    qos_data->budget = 50 * GST_MSECOND;
+   g_object_set_data_full (G_OBJECT (encoding_perf), "wfd-qos-data", qos_data, (GDestroyNotify) free_qos_data);
++  source_src = gst_element_get_static_pad (source, "src");
++  if (source_src)
++    gst_pad_add_probe (source_src, GST_PAD_PROBE_TYPE_BUFFER, count_captured_frame_cb, qos_data, NULL);
+   g_signal_connect (encoding_perf, "handoff", G_CALLBACK (encoding_perf_handoff_cb), qos_data);
+   encoding_perf_sink = gst_element_get_static_pad (encoding_perf, "sink");
+   gst_pad_add_probe (encoding_perf_sink,

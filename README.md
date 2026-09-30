@@ -36,7 +36,7 @@ It is maintained by Benjamin Berg and Christian Glombek, with Anupam Kumar,
 Pedro Sader Azevedo and many other contributors. They have spent years on a
 protocol that is unforgiving in practice. This project redistributes that
 engine without its GTK interface. It adds a Plasma front end, packaging, and
-seventeen patches.
+twenty patches.
 
 Those patches are in `packaging/patches/`, and each one is a fault found by
 using the engine rather than a rewrite of it: encoder selection, stream unit
@@ -48,7 +48,7 @@ for the session, and under a D-Bus name of its own. The last two have each
 stream report on D-Bus whether the receiver is getting a picture, and whether
 the user ended it from the desktop. Four more let the engine run from wherever
 it is installed, send the desktop's sound to the receiver without stutter, and
-cut the delay behind the desktop. They are written to be readable upstream, and belong there
+cut the delay behind the desktop. The last three keep motion smooth and sharp. They are written to be readable upstream, and belong there
 more than here.
 
 Both projects are under the GNU General Public License, version 3 or later.
