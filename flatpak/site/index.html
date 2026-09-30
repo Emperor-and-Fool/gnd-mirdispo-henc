@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mirdispo</title>
+<meta name="description" content="Share your Plasma desktop with Miracast and Chromecast displays.">
+<link rel="icon" href="icon.png">
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1d2126; --muted: #5b6470;
+    --accent: #2f7de1; --accent-text: #ffffff; --border: #dde1e6; --code: #eef1f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c; --card: #1f2227; --text: #e8eaed; --muted: #a4abb5;
+      --accent: #4d94ec; --accent-text: #0b1320; --border: #2e333a; --code: #2a2e34;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", "Noto Sans", sans-serif;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 48px 16px 64px; }
+  header { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; }
+  header img { width: 64px; height: 64px; }
+  h1 { font-size: 2rem; margin: 0; }
+  .tagline { color: var(--muted); margin: 0 0 32px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 24px; margin-bottom: 20px;
+  }
+  h2 { font-size: 1.15rem; margin: 0 0 8px; }
+  p { margin: 0 0 12px; }
+  .button {
+    display: inline-block; background: var(--accent); color: var(--accent-text);
+    text-decoration: none; font-weight: 600; padding: 12px 22px; border-radius: 8px;
+    margin: 4px 0 12px;
+  }
+  .button:focus-visible { outline: 3px solid var(--text); outline-offset: 2px; }
+  .muted { color: var(--muted); font-size: 0.93rem; }
+  code, pre { background: var(--code); border-radius: 6px; font-size: 0.9rem; }
+  code { padding: 1px 5px; }
+  pre { padding: 12px 14px; overflow-x: auto; margin: 0 0 12px; white-space: pre; }
+  a { color: var(--accent); }
+  img.shot { width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--border); }
+  footer { color: var(--muted); font-size: 0.85rem; margin-top: 32px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="icon.png" alt="">
+    <h1>Mirdispo</h1>
+  </header>
+  <p class="tagline">Share your Plasma desktop with Miracast and Chromecast displays.</p>
+
+  <section class="card">
+    <h2>Install</h2>
+    <p>Works on any Linux distribution with Flatpak. Mirdispo appears in your application menu and updates itself with the rest of your apps.</p>
+    <a class="button" href="mirdispo.flatpakref">Install Mirdispo</a>
+    <p class="muted">The button opens Discover, or your distribution's software centre, to install. If nothing happens, run this in a terminal:</p>
+    <pre>flatpak install --user https://hencyber.github.io/mirdispo/mirdispo.flatpakref</pre>
+    <p class="muted">Prefer a Debian package? The <code>.deb</code> for Debian, Ubuntu and derivatives is on the <a href="https://github.com/hencyber/mirdispo/releases/latest">latest release</a>.</p>
+  </section>
+
+  <section class="card">
+    <img class="shot" src="https://raw.githubusercontent.com/hencyber/mirdispo/main/docs/screenshots/displays.png" alt="Mirdispo listing nearby displays">
+  </section>
+
+  <section class="card">
+    <h2>Built on GNOME Network Displays</h2>
+    <p>The casting is done by <a href="https://github.com/GNOME/gnome-network-displays">GNOME Network Displays</a>, by Benjamin Berg, Christian Glombek and contributors. Mirdispo is free software under the GPL, version 3 or later. The source, and every change made to the engine, is on <a href="https://github.com/hencyber/mirdispo">GitHub</a>. The source of the other libraries included in the Flatpak is attached to each <a href="https://github.com/hencyber/mirdispo/releases">release</a>.</p>
+  </section>
+
+  <footer>
+    Miracast and Wi-Fi Display are trademarks of Wi-Fi Alliance, and Chromecast is a trademark of Google LLC.
+    Mirdispo is not certified by or affiliated with either, nor with the GNOME or KDE projects.
+  </footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,128 @@
+From: Mirdispo contributors
+Subject: Stop asking which screen to share on every attempt
+
+Each cast runs in a fresh helper process, and the session was created with
+XDP_PERSIST_MODE_NONE and no restore token. The portal therefore asked which
+screen to share every single time. When an attempt was retried, the new
+chooser replaced the previous one, which the helper reported as
+"Failed to start screencast session: Screencast canceled".
+
+The session is now created with XDP_PERSIST_MODE_PERSISTENT and a restore
+token kept in the user's runtime directory, so a later attempt restores the
+same selection without a dialog. The token is written only after a session
+has actually started, and discarded if the portal refuses it, so a stale
+token cannot make every later attempt fail the same way.
+
+--- a/src/stream/nd-stream.c
++++ b/src/stream/nd-stream.c
+@@ -27,6 +27,7 @@
+ 
+ #include "gnome-network-displays-config.h"
+ #include "nd-stream.h"
++#include <glib/gstdio.h>
+ #include "nd-pulseaudio.h"
+ #include "nd-sink.h"
+ 
+@@ -254,6 +255,66 @@
+   return g_object_ref_sink (res);
+ }
+ 
++/* Every cast runs in a fresh helper process, so without a restore token the
++ * portal asks which screen to share on every attempt. A retry then replaces
++ * the chooser of the attempt before it, which the user sees as "Screencast
++ * canceled" and as being asked the same question over and over. The token is
++ * kept in the runtime directory, so it lasts for the login session and no
++ * longer. */
++static gchar *
++nd_stream_restore_token_path (void)
++{
++  return g_build_filename (g_get_user_runtime_dir (),
++                           "mirdispo",
++                           "screencast-restore-token",
++                           NULL);
++}
++
++static gchar *
++nd_stream_load_restore_token (void)
++{
++  g_autofree gchar *path = nd_stream_restore_token_path ();
++  g_autofree gchar *token = NULL;
++
++  if (!g_file_get_contents (path, &token, NULL, NULL))
++    return NULL;
++
++  g_strstrip (token);
++  if (token[0] == '\0')
++    return NULL;
++
++  return g_steal_pointer (&token);
++}
++
++static void
++nd_stream_save_restore_token (XdpSession *session)
++{
++  g_autofree gchar *token = xdp_session_get_restore_token (session);
++  g_autofree gchar *path = nd_stream_restore_token_path ();
++  g_autofree gchar *dir = g_path_get_dirname (path);
++
++  g_autoptr(GError) error = NULL;
++
++  if (!token || token[0] == '\0')
++    return;
++
++  if (g_mkdir_with_parents (dir, 0700) != 0)
++    return;
++
++  if (!g_file_set_contents_full (path, token, -1,
++                                 G_FILE_SET_CONTENTS_CONSISTENT,
++                                 0600, &error))
++    g_debug ("NdStream: Could not store the screencast restore token: %s", error->message);
++}
++
++static void
++nd_stream_forget_restore_token (void)
++{
++  g_autofree gchar *path = nd_stream_restore_token_path ();
++
++  g_unlink (path);
++}
++
+ static void
+ nd_stream_cleanup (GApplication *app)
+ {
+@@ -412,11 +473,18 @@
+             g_warning ("NdStream: Screencasting portal is unavailable! It is required to select the monitor to stream!");
+         }
+ 
++      /* A stored token that the portal will not honour any more would make
++       * every later attempt fail the same way, so it is discarded and the
++       * next attempt asks the user again. */
++      nd_stream_forget_restore_token ();
++
+       g_warning ("NdStream: Failed to start screencast session: %s\nNdStream: Quitting...", error->message);
+       g_application_quit (G_APPLICATION (self));
+       return;
+     }
+ 
++  nd_stream_save_restore_token (session);
++
+   g_debug ("NdStream: Created screencast session");
+   g_signal_connect_object (self->session,
+                            "closed",
+@@ -542,12 +610,14 @@
+       return;
+     }
+ 
++  g_autofree gchar *restore_token = nd_stream_load_restore_token ();
++
+   xdp_portal_create_screencast_session (self->portal,
+                                         XDP_OUTPUT_MONITOR | XDP_OUTPUT_WINDOW | XDP_OUTPUT_VIRTUAL,
+                                         XDP_SCREENCAST_FLAG_NONE,
+                                         XDP_CURSOR_MODE_EMBEDDED,
+-                                        XDP_PERSIST_MODE_NONE,
+-                                        NULL,
++                                        XDP_PERSIST_MODE_PERSISTENT,
++                                        restore_token,
+                                         self->cancellable,
+                                         nd_screencast_init_cb,
+                                         self);

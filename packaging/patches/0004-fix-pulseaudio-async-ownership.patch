@@ -1,0 +1,282 @@
+From: Mirdispo contributors
+Subject: Fix aborts in the PulseAudio helper during stream teardown
+
+Stopping a cast aborted the stream process with "free(): invalid pointer".
+
+Three separate defects combined:
+
+ 1. nd-pulseaudio.c declared a g_autofree variable directly inside a switch
+    case. Its cleanup handler runs on every exit from the switch statement,
+    including the PA_CONTEXT_FAILED/TERMINATED paths that jump over the
+    initialisation, so glibc was handed an uninitialised pointer. Finalizing
+    the object disconnects the context, which enters exactly that branch.
+ 2. nd-stream.c freed the NdPulseaudio object from the async init callback
+    while self->pulse still referenced it, and took ownership of an object
+    it did not own on success.
+ 3. The PulseAudio context was accessed without the threaded mainloop lock,
+    and nd_pulseaudio_unload() waited on a condition that nothing signalled.
+
+The object is now only stored once initialisation has actually succeeded and
+the stream is not shutting down, every context access happens under the
+mainloop lock, callbacks are detached and the mainloop is stopped before the
+context is released, and the unload path is signalled by its own callback.
+
+--- a/src/nd-pulseaudio.c
++++ b/src/nd-pulseaudio.c
+@@ -138,6 +138,11 @@
+ {
+   NdPulseaudio *self = ND_PULSEAUDIO (userdata);
+ 
++  g_clear_pointer (&self->operation, pa_operation_unref);
++
++  if (!self->init_task)
++    return;
++
+   if (idx == PA_INVALID_INDEX)
+     {
+       g_debug ("NdPulseaudio: Module load failed!");
+@@ -163,6 +168,9 @@
+ {
+   NdPulseaudio *self = ND_PULSEAUDIO (userdata);
+ 
++  if (!self->init_task)
++    return;
++
+   /* eol is negative for error, and 1 for end of list (with NULL sink info then) */
+ 
+   /* We are only ever called once, as we cancel the operation
+@@ -210,6 +218,8 @@
+                                                    "device.description=\"%s\"",
+                                                    self->uuid,
+                                                    self->name);
++  /* Release the finished sink-info operation before replacing it. */
++  g_clear_pointer (&self->operation, pa_operation_unref);
+   self->operation = pa_context_load_module (self->context,
+                                             "module-null-sink",
+                                             module_args,
+@@ -220,33 +230,60 @@
+ static void
+ nd_pulseaudio_unload_module_cb (pa_context *c, int success, void *userdata)
+ {
++  NdPulseaudio *self = ND_PULSEAUDIO (userdata);
++
+   if (success)
+     g_info ("NdPulseaudio: Module unloaded");
+   else
+     g_warning ("NdPulseaudio: Error unloading module");
++
++  /* Wake up nd_pulseaudio_unload(), which waits for this operation. */
++  if (self->mainloop)
++    pa_threaded_mainloop_signal (self->mainloop, 0);
+ }
+ 
+ void
+ nd_pulseaudio_unload (NdPulseaudio *self)
+ {
++  pa_operation *operation;
++
+   g_debug ("NdPulseaudio: Unloading module");
+ 
+-  if (!PA_CONTEXT_IS_GOOD (pa_context_get_state (self->context)))
++  if (!self->mainloop || !self->context)
+     return;
+-  while (pa_context_get_state (self->context) != PA_CONTEXT_READY)
+-    pa_threaded_mainloop_wait (self->mainloop);
+-  pa_operation *operation = pa_context_unload_module (self->context,
+-                                                      self->null_module_idx,
+-                                                      nd_pulseaudio_unload_module_cb,
+-                                                      NULL);
++
++  /* All context access must happen under the threaded mainloop lock;
++   * otherwise it races with callbacks running on the mainloop thread. */
++  pa_threaded_mainloop_lock (self->mainloop);
++
++  if (pa_context_get_state (self->context) != PA_CONTEXT_READY ||
++      self->null_module_idx == PA_INVALID_INDEX)
++    {
++      pa_threaded_mainloop_unlock (self->mainloop);
++      return;
++    }
++
++  operation = pa_context_unload_module (self->context,
++                                        self->null_module_idx,
++                                        nd_pulseaudio_unload_module_cb,
++                                        self);
+   if (!operation)
+     {
+       g_warning ("NdPulseaudio: Error unloading module operation");
++      pa_threaded_mainloop_unlock (self->mainloop);
+       return;
+     }
++
++  /* The wait is bounded: the operation leaves the running state when it
++   * completes, and it is cancelled if the context dies, which the state
++   * callback signals as well. */
+   while (pa_operation_get_state (operation) == PA_OPERATION_RUNNING)
+     pa_threaded_mainloop_wait (self->mainloop);
++
+   pa_operation_unref (operation);
++  self->null_module_idx = PA_INVALID_INDEX;
++
++  pa_threaded_mainloop_unlock (self->mainloop);
+ }
+ 
+ static void
+@@ -264,21 +301,38 @@
+       break;
+ 
+     case PA_CONTEXT_READY:
+-      if (!self->init_task)
+-        return;
+-
+-      g_debug ("NdPulseaudio: Querying sink info by name");
+-      g_autofree gchar *sink_name = g_strdup_printf (ND_PA_SINK "_%.8s", self->uuid);
+-      self->operation = pa_context_get_sink_info_by_name (self->context,
+-                                                          sink_name,
+-                                                          on_pa_nd_sink_got_info,
+-                                                          self);
++      {
++        /* This declaration has to stay inside its own block. A g_autofree
++         * variable declared directly in a switch case is cleaned up on every
++         * exit from the switch statement, including the paths that jump over
++         * its initialisation. Those paths then free an uninitialised pointer
++         * and abort the process. */
++        g_autofree gchar *sink_name = NULL;
++
++        if (self->mainloop)
++          pa_threaded_mainloop_signal (self->mainloop, 0);
++
++        if (!self->init_task)
++          break;
++
++        g_debug ("NdPulseaudio: Querying sink info by name");
++        sink_name = g_strdup_printf (ND_PA_SINK "_%.8s", self->uuid);
++        self->operation = pa_context_get_sink_info_by_name (self->context,
++                                                            sink_name,
++                                                            on_pa_nd_sink_got_info,
++                                                            self);
++      }
+       break;
+ 
+     case PA_CONTEXT_FAILED:
+     case PA_CONTEXT_TERMINATED:
++      /* Release nd_pulseaudio_unload() if it is waiting for an operation
++       * that can no longer complete. */
++      if (self->mainloop)
++        pa_threaded_mainloop_signal (self->mainloop, 0);
++
+       if (!self->init_task)
+-        return;
++        break;
+ 
+       g_debug ("NdPulseaudio: PA context went into failed state during init");
+       return_idle_error (self->init_task,
+@@ -377,14 +431,35 @@
+       g_clear_object (&self->init_task);
+     }
+ 
++  if (self->mainloop && self->context)
++    {
++      pa_threaded_mainloop_lock (self->mainloop);
++
++      /* Detach every callback before tearing the context down so that no
++       * callback can run against a half-finalized object. */
++      pa_context_set_state_callback (self->context, NULL, NULL);
++
++      if (self->operation)
++        pa_operation_cancel (self->operation);
++      g_clear_pointer (&self->operation, pa_operation_unref);
++
++      pa_context_disconnect (self->context);
++
++      pa_threaded_mainloop_unlock (self->mainloop);
++    }
++
+   if (self->operation)
+     pa_operation_cancel (self->operation);
+   g_clear_pointer (&self->operation, pa_operation_unref);
+-  if (self->context)
+-    pa_context_disconnect (self->context);
+-  g_clear_pointer (&self->context, pa_context_unref);
++
+   self->mainloop_api = NULL;
+-  pa_threaded_mainloop_stop (self->mainloop);
++
++  /* Stop the mainloop thread before dropping the context, so the context
++   * cannot be released from under a callback that is still running. */
++  if (self->mainloop)
++    pa_threaded_mainloop_stop (self->mainloop);
++
++  g_clear_pointer (&self->context, pa_context_unref);
+   g_clear_pointer (&self->mainloop, pa_threaded_mainloop_free);
+   g_clear_pointer (&self->name, g_free);
+   g_clear_pointer (&self->uuid, g_free);
+
+--- a/src/stream/nd-stream.c
++++ b/src/stream/nd-stream.c
+@@ -43,6 +43,7 @@
+   NdScreenCastSourceType screencast_type;
+ 
+   GCancellable          *cancellable;
++  gboolean               shutting_down;
+ 
+   NdSink                *sink;
+ };
+@@ -260,6 +261,10 @@
+ 
+   g_debug ("NdStream: Cleanup");
+ 
++  self->shutting_down = TRUE;
++  if (self->cancellable)
++    g_cancellable_cancel (self->cancellable);
++
+   g_clear_object (&self->portal);
+   if (self->session)
+     {
+@@ -291,7 +296,6 @@
+       g_clear_pointer (&self->sigint_source, g_source_unref);
+     }
+ 
+-  g_cancellable_cancel (self->cancellable);
+   g_clear_object (&self->cancellable);
+ }
+ 
+@@ -467,12 +471,12 @@
+       if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+         g_warning ("NdStream: Error initializing pulse audio sink: %s", error->message);
+ 
+-      g_object_unref (source_object);
+       return;
+     }
+ 
+   self = ND_STREAM (user_data);
+-  self->pulse = ND_PULSEAUDIO (source_object);
++  if (!self->shutting_down)
++    self->pulse = ND_PULSEAUDIO (g_object_ref (source_object));
+ }
+ 
+ static void
+@@ -484,6 +488,7 @@
+   XdpPortal *portal = XDP_PORTAL (source_object);
+   NdStream *self = ND_STREAM (user_data);
+   NdSink *sink = ND_SINK (self->sink);
++  NdPulseaudio *pulse;
+   gchar *name = NULL;
+   gchar *uuid = NULL;
+ 
+@@ -505,12 +510,13 @@
+   g_object_get (sink, "display-name", &name, NULL);
+   g_object_get (sink, "uuid", &uuid, NULL);
+ 
+-  self->pulse = nd_pulseaudio_new (name, uuid);
+-  g_async_initable_init_async (G_ASYNC_INITABLE (self->pulse),
++  pulse = nd_pulseaudio_new (name, uuid);
++  g_async_initable_init_async (G_ASYNC_INITABLE (pulse),
+                                G_PRIORITY_LOW,
+                                self->cancellable,
+                                nd_pulseaudio_init_async_cb,
+                                self);
++  g_object_unref (pulse);
+ }
+ 
+ 

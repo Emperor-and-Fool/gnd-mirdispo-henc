@@ -1,0 +1,345 @@
+From: Mirdispo contributors
+Subject: Choose the streamed mode from both ends of the link
+
+Every session logged "No resolution found, falling back to standard FullHD
+resolution" and streamed 1920x1080 at 30 Hz to every receiver, whatever it
+could take and whatever was being shared. The selection exists upstream but
+is disabled behind #if 0, with a comment that the native resolution some
+devices report is useless. That concerns the "native" field, which is still
+ignored here.
+
+Three facts are available and all three are now used.
+
+What the receiver accepts. Its advertised modes are its own statement. A
+receiver advertises three tables: CEA holds the timings consumer televisions
+are built to display, VESA the computer monitor ones, HH the handheld ones.
+get_resolutions() flattens all three, which loses the only information
+saying what kind of display is listening: ranking across the flattened list
+sent a television 1920x1200, a monitor shape it accepted but had to
+resynchronise for, and the picture flashed. CEA modes are preferred when a
+receiver offers any.
+
+What is being shared. The portal reports the size of the captured screen or
+window, which is passed to the client. Nothing larger is considered: sending
+more pixels than exist spends bandwidth and encoding time on an upscale the
+receiver could do itself.
+
+How much of it a mode actually shows. The picture is fitted without
+distortion, so a mode of a different shape wastes the difference on black
+bars. Ranking by the fitted scale accounts for that without reasoning about
+shape separately: 1920x1080 shows more of a 16:10 screen than the same-shaped
+1680x1050 does, while a 4:3 screen is better served by 1600x1200 than by
+1920x1080.
+
+Ties fall back to the existing compare_resolutions(). No preference between
+a sharper picture and a smoother one is expressed anywhere: which is better
+depends on the room, the screen and what is being shown, and neither end
+states a preference. Interlaced modes are skipped because the pipeline
+produces progressive frames, and the 1080p30 fallback remains for receivers
+that advertise nothing usable.
+
+The choice is a function of its own so it can be tested against real
+advertised lists without a client, a socket or a television.
+
+--- a/src/wfd/wfd-client.c
++++ b/src/wfd/wfd-client.c
+@@ -112,6 +112,101 @@
+   return a_weight - b_weight;
+ }
+ 
++static gint source_width = 0;
++static gint source_height = 0;
++
++/**
++ * wfd_client_set_source_size:
++ * @width: width of what is being captured, or 0 if unknown
++ * @height: height of what is being captured, or 0 if unknown
++ *
++ * Records the size of the screen or window being shared, so that the mode
++ * sent to the receiver can be chosen against both ends rather than the
++ * receiver alone.
++ *
++ * This is process-wide because each cast runs in a helper process of its
++ * own: there is exactly one capture per process for its whole lifetime.
++ */
++void
++wfd_client_set_source_size (gint width, gint height)
++{
++  source_width = width;
++  source_height = height;
++}
++
++/* How much of the captured screen a mode actually shows.
++ *
++ * The picture is fitted into the mode without distorting it, so the scale is
++ * limited by whichever axis runs out first. A mode whose shape differs from
++ * the source wastes the difference on black bars, and this accounts for that
++ * without having to reason about shape separately: 1920x1080 shows more of a
++ * 16:10 screen than 1680x1050 does, even though 1680x1050 is the same shape,
++ * and far more than 720x480, which is closer in shape still.
++ */
++static gdouble
++displayed_scale (WfdResolution *mode, gint width, gint height)
++{
++  gdouble horizontal = (gdouble) mode->width / width;
++  gdouble vertical = (gdouble) mode->height / height;
++
++  return MIN (horizontal, vertical);
++}
++
++WfdResolution *
++wfd_client_pick_resolution (GList *resolutions, gint width, gint height)
++{
++  WfdResolution *best = NULL;
++  gboolean constrain = width > 0 && height > 0;
++
++  for (gint pass = 0; pass < 2; pass++)
++    {
++      for (GList *item = resolutions; item; item = item->next)
++        {
++          WfdResolution *candidate = (WfdResolution *) item->data;
++
++          if (candidate->interlaced)
++            continue;
++
++          if (constrain && pass == 0 &&
++              (candidate->width > width || candidate->height > height))
++            continue;
++
++          if (!best)
++            {
++              best = candidate;
++              continue;
++            }
++
++          if (constrain)
++            {
++              gdouble candidate_shown = displayed_scale (candidate, width, height);
++              gdouble best_shown = displayed_scale (best, width, height);
++
++              /* A hundredth of the picture is below what anyone sees, so
++               * modes that close are treated as equal and the ordering
++               * below decides. */
++              if (ABS (candidate_shown - best_shown) > 0.01)
++                {
++                  if (candidate_shown > best_shown)
++                    best = candidate;
++                  continue;
++                }
++            }
++
++          if (compare_resolutions (best, candidate) < 0)
++            best = candidate;
++        }
++
++      if (best || !constrain)
++        break;
++
++      /* Nothing fitted inside the source; take the best of the rest. */
++      constrain = FALSE;
++    }
++
++  return best;
++}
++
+ void
+ wfd_client_select_codec_and_resolution (WfdClient *self, WfdH264ProfileFlags profile)
+ {
+@@ -138,35 +233,67 @@
+   else
+     g_warning ("No codec/resolution could be found, falling back to defaults!");
+ 
+-#if 0
+-  /* The native resolution reported by some devices is just useless */
+-  if (codec->native)
+-    self->params->selected_resolution = wfd_resolution_copy (codec->native);
+-  else
++  if (codec)
+     {
+-      /* Find a good resolution. */
+       g_autoptr(GList) resolutions = NULL;
+-      GList *last;
++      WfdResolution *best = NULL;
+ 
+       resolutions = wfd_video_codec_get_resolutions (codec);
+-      resolutions = g_list_sort (resolutions, compare_resolutions);
+-      last = g_list_last (resolutions);
+-      if (last)
+-        self->params->selected_resolution = wfd_resolution_copy ((WfdResolution *) last->data);
+-      else
++
++      {
++        g_autoptr(GString) offered = g_string_new (NULL);
++
++        for (GList *item = resolutions; item; item = item->next)
++          {
++            WfdResolution *candidate = (WfdResolution *) item->data;
++
++            g_string_append_printf (offered, "%s%ix%i@%i%s",
++                                    offered->len ? ", " : "",
++                                    candidate->width, candidate->height,
++                                    candidate->refresh_rate,
++                                    candidate->interlaced ? "i" : "");
++          }
++
++        g_message ("WfdClient: Receiver offers %s",
++                   offered->len ? offered->str : "nothing");
++      }
++
++      {
++        /* Prefer the receiver's CEA modes.
++         *
++         * A receiver advertises three tables: CEA holds the timings consumer
++         * televisions are built to display, VESA the computer monitor ones,
++         * HH the handheld ones. Taking the largest mode across all three sent
++         * a television 1920x1200, a monitor shape it accepted but had to
++         * resynchronise for, which showed as the picture flashing. A receiver
++         * that offers CEA modes is saying which timings it is made for.
++         */
++        g_autoptr(GList) preferred = wfd_video_codec_get_resolutions_cea (codec);
++
++        best = wfd_client_pick_resolution (preferred, source_width, source_height);
++        if (!best)
++          best = wfd_client_pick_resolution (resolutions, source_width, source_height);
++      }
++
++      if (best)
+         {
+-#endif
+-  /* Create a standard full HD resolution if everything fails. */
+-  g_warning ("WfdClient: No resolution found, falling back to standard FullHD resolution.");
+-  self->params->selected_resolution = wfd_resolution_new ();
+-  self->params->selected_resolution->width = 1920;
+-  self->params->selected_resolution->height = 1080;
+-  self->params->selected_resolution->refresh_rate = 30;
+-  self->params->selected_resolution->interlaced = FALSE;
+-#if 0
+-}
+-}
+-#endif
++          self->params->selected_resolution = wfd_resolution_copy (best);
++          g_message ("WfdClient: Using %ix%i@%i of the modes the receiver offers.",
++                     best->width, best->height, best->refresh_rate);
++        }
++    }
++
++  if (!self->params->selected_resolution)
++    {
++      /* Create a standard full HD resolution if everything fails. */
++      g_warning ("WfdClient: No resolution found, falling back to standard FullHD resolution.");
++      self->params->selected_resolution = wfd_resolution_new ();
++      self->params->selected_resolution->width = 1920;
++      self->params->selected_resolution->height = 1080;
++      self->params->selected_resolution->refresh_rate = 30;
++      self->params->selected_resolution->interlaced = FALSE;
++    }
++
+   g_debug ("selected resolution %i, %i @%i", self->params->selected_resolution->width, self->params->selected_resolution->height, self->params->selected_resolution->refresh_rate);
+ 
+   /* We currently only support AAC with two channels  */
+
+--- a/src/wfd/wfd-client.h
++++ b/src/wfd/wfd-client.h
+@@ -12,6 +12,15 @@
+ 
+ G_DECLARE_FINAL_TYPE (WfdClient, wfd_client, WFD, CLIENT, GstRTSPClient)
+ 
++#include "wfd-resolution.h"
++
++/* Exposed so the choice can be tested against a receiver's real list
++ * of modes, without a client, a socket or a television. */
++void wfd_client_set_source_size (gint width, gint height);
++WfdResolution *wfd_client_pick_resolution (GList *resolutions,
++                                          gint   width,
++                                          gint   height);
++
+ WfdClient * wfd_client_new (void);
+ void wfd_client_query_support (WfdClient *self);
+ void wfd_client_trigger_method (WfdClient   *self,
+
+--- a/src/wfd/wfd-video-codec.c
++++ b/src/wfd/wfd-video-codec.c
+@@ -363,6 +363,38 @@
+ }
+ 
+ /**
++ * wfd_video_codec_get_resolutions_cea:
++ * @self: a #WfdVideoCodec
++ *
++ * The modes the receiver supports from the CEA table, which holds the
++ * timings consumer televisions are built to display.
++ *
++ * Returns: (transfer container) (element-type WfdResolution): the modes
++ */
++GList *
++wfd_video_codec_get_resolutions_cea (WfdVideoCodec *self)
++{
++  WfdResolution *resolution;
++
++  g_autoptr(GList) res = NULL;
++  guint32 bits, i;
++
++  i = 0;
++  for (bits = self->cea_sup; bits; bits = bits >> 1)
++    {
++      if (bits & 0x1)
++        {
++          resolution = (gpointer) resolution_table_lookup (RESOLUTION_TABLE_CEA, i);
++          if (resolution)
++            res = g_list_append (res, resolution);
++        }
++      i++;
++    }
++
++  return g_steal_pointer (&res);
++}
++
++/**
+  * wfd_video_codec_get_resolutions:
+  * @self: a #WfdVideoCodec
+  *
+
+--- a/src/wfd/wfd-video-codec.h
++++ b/src/wfd/wfd-video-codec.h
+@@ -50,6 +50,7 @@
+ guint32            wfd_video_codec_get_max_bitrate_kbit (WfdVideoCodec *self);
+ 
+ GList             *wfd_video_codec_get_resolutions (WfdVideoCodec *self);
++GList             *wfd_video_codec_get_resolutions_cea (WfdVideoCodec *self);
+ gchar             *wfd_video_codec_get_descriptor_for_resolution (WfdVideoCodec       *self,
+                                                                   const WfdResolution *resolution);
+ 
+
+--- a/src/stream/nd-stream.c
++++ b/src/stream/nd-stream.c
+@@ -28,6 +28,7 @@
+ #include "gnome-network-displays-config.h"
+ #include "nd-stream.h"
+ #include <glib/gstdio.h>
++#include "wfd/wfd-client.h"
+ #include "nd-pulseaudio.h"
+ #include "nd-sink.h"
+ 
+@@ -130,6 +131,21 @@
+   g_debug ("NdStream: Got a stream with node ID: %d", node_id);
+   g_debug ("NdStream: Got a stream of type: %d", screencast_type);
+ 
++  /* Tell the WFD client how large the captured screen is, so the mode
++   * offered to the receiver is chosen against both ends of the link rather
++   * than the receiver alone. The portal reports this per stream, so it is
++   * whatever the user picked to share, not the desktop as a whole. */
++  {
++    gint32 capture_width = 0;
++    gint32 capture_height = 0;
++
++    if (g_variant_lookup (stream_properties, "size", "(ii)", &capture_width, &capture_height))
++      {
++        g_message ("NdStream: Sharing a %ix%i source.", capture_width, capture_height);
++        wfd_client_set_source_size (capture_width, capture_height);
++      }
++  }
++
+   switch (screencast_type)
+     {
+     case ND_SCREEN_CAST_SOURCE_TYPE_MONITOR:
+

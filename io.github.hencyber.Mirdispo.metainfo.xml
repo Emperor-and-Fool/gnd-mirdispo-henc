@@ -1,0 +1,297 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.hencyber.Mirdispo</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Mirdispo</name>
+  <summary>Share your Plasma desktop with Miracast displays</summary>
+  <developer id="io.github.hencyber">
+    <name>Mirdispo contributors</name>
+  </developer>
+  <url type="homepage">https://github.com/hencyber/mirdispo</url>
+  <url type="bugtracker">https://github.com/hencyber/mirdispo/issues</url>
+  <url type="vcs-browser">https://github.com/hencyber/mirdispo</url>
+  <description>
+    <p>
+      Mirdispo is a Plasma-native Wi-Fi Display sender. It finds
+      compatible Miracast receivers, reports hardware and codec readiness, and
+      guides the user through a screen-sharing session.
+    </p>
+    <p>
+      It supports Miracast over Wi-Fi Direct, Miracast over Infrastructure,
+      and Chromecast. The casting itself is done by GNOME Network Displays,
+      by Benjamin Berg, Christian Glombek and contributors, which is included
+      with a small set of documented fixes.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.hencyber.Mirdispo.desktop</launchable>
+  <provides>
+    <binary>mirdispo</binary>
+  </provides>
+  <content_rating type="oars-1.1" />
+  <screenshots>
+    <screenshot type="default">
+      <caption>Receivers found nearby</caption>
+      <image>https://raw.githubusercontent.com/hencyber/mirdispo/main/docs/screenshots/displays.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Sharing the screen with a television</caption>
+      <image>https://raw.githubusercontent.com/hencyber/mirdispo/main/docs/screenshots/casting.png</image>
+    </screenshot>
+  </screenshots>
+  <categories>
+    <category>Network</category>
+    <category>AudioVideo</category>
+  </categories>
+  <releases>
+    <release version="3.3.1" date="2026-09-30">
+      <description>
+        <p>Mirdispo finds its casting engine wherever it is installed, so installing from source into a prefix of your choice and running from a source checkout both work.</p>
+      </description>
+    </release>
+    <release version="3.3.0" date="2026-09-30">
+      <description>
+        <p>Mirdispo has an icon in the system tray. Closing the window keeps it running there, and the tray shows what is being shared, stops sharing, and quits.</p>
+        <p>Stopping screen sharing from the desktop, for instance with Plasma's screen sharing indicator, is now respected. Mirdispo no longer takes it for a lost connection and reconnects.</p>
+      </description>
+    </release>
+    <release version="3.2.1" date="2026-09-30">
+      <description>
+        <p>Fixes a working cast being reported as failed. The stream now reports when the receiver is getting a picture, and Mirdispo shows the session as active from that, also for receivers reached over the network rather than Wi-Fi Direct.</p>
+        <p>Closing Mirdispo while nothing is being cast now stops the casting engine too, so an update always takes effect the next time Mirdispo starts.</p>
+      </description>
+    </release>
+    <release version="3.2.0" date="2026-09-30">
+      <description>
+        <p>A Wi-Fi Direct handshake that the receiver has already given up on is retried after about 16 seconds instead of 45, now for every user and also in the Flatpak. It is noticed from the network interfaces rather than the system log, which only administrators can read.</p>
+        <p>In the Flatpak, the permission to share the screen is kept for the whole login session instead of being asked for again every time the application starts.</p>
+      </description>
+    </release>
+    <release version="3.1.0" date="2026-09-30">
+      <description>
+        <p>The casting engine no longer needs GTK or libadwaita, so installing Mirdispo pulls in far less. It registers on D-Bus under its own name and can no longer collide with GNOME Network Displays running on the same desktop. It also runs inside a Flatpak sandbox.</p>
+      </description>
+    </release>
+    <release version="3.0.0" date="2026-09-30">
+      <description>
+        <p>The application is now called Mirdispo and replaces the kde-network-displays package. The About page credits GNOME Network Displays, whose engine does the casting, and the Licence page says whose trademarks the protocol names are.</p>
+        <p>Diagnostics run from the command line find the casting backend, and any H.264 encoder the system has counts as a working video pipeline, not only OpenH264.</p>
+      </description>
+    </release>
+    <release version="2.8.0" date="2026-09-30">
+      <description>
+        <p>The licence page shows the licence itself and finds the source wherever the system keeps it, instead of naming paths that only exist on Debian and Ubuntu.</p>
+      </description>
+    </release>
+    <release version="2.7.2" date="2026-09-30">
+      <description>
+        <p>Removes code that nothing used any longer.</p>
+      </description>
+    </release>
+    <release version="2.7.1" date="2026-09-21">
+      <description>
+        <p>Uses software encoding again. Hardware encoding aborts inside the graphics driver when a cast is stopped, which was wrongly attributed to a fault in this project.</p>
+      </description>
+    </release>
+    <release version="2.7.0" date="2026-09-21">
+      <description>
+        <p>Picks the display mode from both ends: what the receiver accepts, what is being shared, and how much of it each mode would actually show.</p>
+      </description>
+    </release>
+    <release version="2.6.1" date="2026-09-21">
+      <description>
+        <p>Fixes the picture flashing on televisions: a receiver's television timings are used in preference to the computer monitor ones it also lists.</p>
+      </description>
+    </release>
+    <release version="2.6.0" date="2026-09-21">
+      <description>
+        <p>Streams the best mode a receiver says it supports, without preferring a sharper or a smoother picture on the viewer's behalf.</p>
+      </description>
+    </release>
+    <release version="2.5.0" date="2026-09-21">
+      <description>
+        <p>Chooses frames per second over pixels: a receiver offering 1080p at 30 Hz and 720p at 60 Hz now gets 60 Hz, so motion stops stuttering.</p>
+      </description>
+    </release>
+    <release version="2.4.1" date="2026-09-21">
+      <description>
+        <p>Records every display mode a receiver offers, so a poor choice can be told apart from a receiver that offers nothing better.</p>
+      </description>
+    </release>
+    <release version="2.4.0" date="2026-09-21">
+      <description>
+        <p>Sends the receiver a refresh rate it says it supports, instead of 30 Hz to everything. Motion should stop stuttering on receivers that take 60 Hz.</p>
+      </description>
+    </release>
+    <release version="2.3.0" date="2026-09-21">
+      <description>
+        <p>Uses the graphics chip to encode video again. Software encoding was forced after a crash whose real cause turned out to be a bug in this project, since fixed.</p>
+      </description>
+    </release>
+    <release version="2.2.5" date="2026-09-21">
+      <description>
+        <p>The About page is down to a name, a version and a line of credit, with the legal notices on a page of their own.</p>
+      </description>
+    </release>
+    <release version="2.2.4" date="2026-09-21">
+      <description>
+        <p>Each card's row now spans the card, so the action button sits in the same place whatever a receiver is called.</p>
+      </description>
+    </release>
+    <release version="2.2.3" date="2026-09-21">
+      <description>
+        <p>The layout test now measures the Plasma style the application actually runs under.</p>
+      </description>
+    </release>
+    <release version="2.2.2" date="2026-09-21">
+      <description>
+        <p>The Connect and Disconnect buttons now line up in one column whatever a receiver is called.</p>
+      </description>
+    </release>
+    <release version="2.2.1" date="2026-09-21">
+      <description>
+        <p>Credits the upstream project the streaming engine comes from, and describes what the application actually does today.</p>
+      </description>
+    </release>
+    <release version="2.2.0" date="2026-09-21">
+      <description>
+        <p>Completes the licence obligations for the GPL-3.0 code this builds on: the full licence text is shipped, the About page carries the copyright, warranty and modification notices, and every source file states its licence.</p>
+      </description>
+    </release>
+    <release version="2.1.2" date="2026-09-21">
+      <description>
+        <p>Strips creation metadata from the icons and uses documentation addresses in the demo, so nothing in the package records who built it.</p>
+      </description>
+    </release>
+    <release version="2.1.1" date="2026-09-21">
+      <description>
+        <p>Diagnostics now answers why casting would not work, instead of reporting radio facts nobody can act on.</p>
+      </description>
+    </release>
+    <release version="2.1.0" date="2026-09-21">
+      <description>
+        <p>Removes the Wi-Fi power saving switch. Its benefit was never demonstrated, it only took effect on the next Wi-Fi connection, and it applied to a route that is now the fallback. The diagnostics page still reports the setting.</p>
+      </description>
+    </release>
+    <release version="2.0.0" date="2026-09-21">
+      <description>
+        <p>Casts over your network when the receiver offers it, which connects in about a second and avoids Wi-Fi Direct channel negotiation entirely. Wi-Fi Direct stays the fallback.</p>
+      </description>
+    </release>
+    <release version="1.9.2" date="2026-09-21">
+      <description>
+        <p>Removes references to the hardware it was developed against, and third-party brand names from the demo, out of the shipped files.</p>
+      </description>
+    </release>
+    <release version="1.9.0" date="2026-09-21">
+      <description>
+        <p>Retries a failed group formation after two seconds instead of nine, since the receiver sends nothing to wait for in that case.</p>
+      </description>
+    </release>
+    <release version="1.8.0" date="2026-09-21">
+      <description>
+        <p>A lost handshake is retried as soon as wpa_supplicant reports it, instead of waiting out NetworkManager's 45 second timeout.</p>
+      </description>
+    </release>
+    <release version="1.7.0" date="2026-09-21">
+      <description>
+        <p>Stops asking which screen to share on every attempt, and never runs two stream helpers against the same receiver.</p>
+      </description>
+    </release>
+    <release version="1.6.0" date="2026-09-21">
+      <description>
+        <p>Keeps trying a receiver that ignores the handshake, standing off between attempts so the two sides stop talking over each other, and shows which attempt it is on.</p>
+      </description>
+    </release>
+    <release version="1.5.0" date="2026-09-21">
+      <description>
+        <p>A receiver that ignores the first handshake is retried immediately instead of waiting for the user to click again, which is what made connecting feel slow.</p>
+      </description>
+    </release>
+    <release version="1.4.3" date="2026-09-20">
+      <description>
+        <p>Diagnostics no longer print the kernel's name for the Wi-Fi adapter, and report the Wi-Fi channel rather than a frequency in megahertz.</p>
+      </description>
+    </release>
+    <release version="1.4.2" date="2026-09-20">
+      <description>
+        <p>Diagnostics rows now read alike: one short line each, and one icon family across the page.</p>
+      </description>
+    </release>
+    <release version="1.4.1" date="2026-09-20">
+      <description>
+        <p>The power saving control now reads "Power saving: ON" or "OFF" instead of leaving its state to an icon.</p>
+      </description>
+    </release>
+    <release version="1.4.0" date="2026-09-20">
+      <description>
+        <p>Wi-Fi power saving is now a switch beside Search again on the displays page, and the connection status is no longer printed twice.</p>
+      </description>
+    </release>
+    <release version="1.3.0" date="2026-09-20">
+      <description>
+        <p>Stops changing Wi-Fi settings behind a cast, since NetworkManager cannot apply power saving to a live connection anyway. The diagnostics page now offers the change as a button that verifies its own outcome and rolls back rather than risk the saved network password.</p>
+      </description>
+    </release>
+    <release version="1.2.0" date="2026-09-20">
+      <description>
+        <p>Handles the radio itself: Wi-Fi power saving is turned off for the duration of a cast and restored afterwards, and a refused handshake is retried before the user is told anything.</p>
+      </description>
+    </release>
+    <release version="1.1.0" date="2026-09-20">
+      <description>
+        <p>Checks whether Wi-Fi power saving is enabled, which makes the adapter sleep between beacons and drops casts mid-session, and names the command that turns it off.</p>
+      </description>
+    </release>
+    <release version="1.0.9" date="2026-09-20">
+      <description>
+        <p>Restarts the stream automatically when the Wi-Fi Direct link drops, so a brief radio glitch costs an interruption instead of the whole session.</p>
+      </description>
+    </release>
+    <release version="1.0.8" date="2026-09-20">
+      <description>
+        <p>Reports the Wi-Fi channel as diagnostic context instead of warning about a fault that testing did not confirm.</p>
+      </description>
+    </release>
+    <release version="1.0.7" date="2026-09-20">
+      <description>
+        <p>Reads the Wi-Fi Direct handshake state from NetworkManager, names the step it is on and the reason it failed, and warns when the adapter has to share its radio with the Wi-Fi network.</p>
+      </description>
+    </release>
+    <release version="1.0.6" date="2026-09-20">
+      <description>
+        <p>Shows each step of the Wi-Fi Direct handshake instead of a motionless "Connecting", and explains what to do when a receiver refuses the connection.</p>
+      </description>
+    </release>
+    <release version="1.0.5" date="2026-09-20">
+      <description>
+        <p>Connect now always starts the display that was clicked, and fixes two crashes: a use-after-free in receiver discovery and an unbounded loop when a Chromecast connection fails.</p>
+      </description>
+    </release>
+    <release version="1.0.4" date="2026-09-20">
+      <description>
+        <p>Fixes a crash when a cast is stopped, caused by unsafe PulseAudio teardown in the streaming backend.</p>
+      </description>
+    </release>
+    <release version="1.0.3" date="2026-09-20">
+      <description>
+        <p>Guarantees that the stream helper exits when a connection is cancelled before the screen chooser finishes.</p>
+      </description>
+    </release>
+    <release version="1.0.2" date="2026-09-20">
+      <description>
+        <p>Gives every cast attempt its own service instance, reports real start failures, and labels Miracast and Chromecast receivers correctly.</p>
+      </description>
+    </release>
+    <release version="1.0.1" date="2026-09-20">
+      <description>
+        <p>Uses software H.264 encoding to avoid a crash in a VA-API driver when a stream is stopped.</p>
+      </description>
+    </release>
+    <release version="1.0.0" date="2026-09-20">
+      <description>
+        <p>Initial production package with Kirigami UI, casting backend, diagnostics, and demo mode.</p>
+      </description>
+    </release>
+  </releases>
+</component>

@@ -1,0 +1,287 @@
+# Mirdispo — share a Plasma desktop on a wireless display
+# Copyright (C) 2026 Mirdispo contributors
+#
+# This program is free software: you can redistribute it and/or modify it
+# under the terms of the GNU General Public License as published by the Free
+# Software Foundation, either version 3 of the License, or (at your option)
+# any later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+# FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+# more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program. If not, see <https://www.gnu.org/licenses/>.
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import subprocess
+
+from .models import DisplayDevice
+
+
+# The engine is built with this project's bus prefix (patch 0010), so it never
+# competes with GNOME Network Displays for a name. The object path and the
+# interface are upstream's.
+BUS_PREFIX = "io.github.hencyber.Mirdispo"
+SERVICE = BUS_PREFIX + ".Manager"
+PATH = "/org/gnome/NetworkDisplays/Manager"
+INTERFACE = "org.gnome.NetworkDisplays.Manager"
+PROPERTIES = "org.freedesktop.DBus.Properties"
+
+STATE_NAMES = {
+    0x0: "available",
+    0x50: "configuring firewall",
+    0x100: "connecting Wi-Fi Direct",
+    0x110: "waiting for receiver",
+    0x120: "starting stream",
+    0x1000: "streaming",
+    0x10000: "error",
+}
+
+PROTOCOL_NAMES = {
+    0: "Network display",
+    1: "Miracast test receiver",
+    2: "Chromecast test receiver",
+    3: "Miracast (Wi-Fi Direct)",
+    4: "Miracast over your network",
+    5: "Chromecast",
+}
+
+# Which way to reach a receiver that offers more than one.
+#
+# Casting over the network needs no Wi-Fi Direct group, so there is no channel
+# for the receiver to choose badly and no handshake to time out: a measured
+# connection over the network was up in one second, against six to thirty for
+# Wi-Fi Direct on the same receiver. Wi-Fi Direct remains the fallback for
+# receivers that are not on the network.
+PROTOCOL_PREFERENCE = {
+    4: 0,   # over the network
+    3: 1,   # Wi-Fi Direct
+    0: 2,
+    5: 3,   # Chromecast, which does not mirror the screen on every receiver
+    1: 4,
+    2: 5,
+}
+
+
+def protocol_rank(protocol: int) -> int:
+    return PROTOCOL_PREFERENCE.get(protocol, 9)
+
+
+def display_from_dbus(values: dict) -> DisplayDevice:
+    uuid = str(values.get("uuid") or "")
+    protocol = int(values.get("protocol") or 0)
+    state = int(values.get("state") or 0)
+    return DisplayDevice(
+        path=uuid,
+        name=str(values.get("display-name") or "Unnamed display"),
+        manufacturer=PROTOCOL_NAMES.get(protocol, "Network display"),
+        model=STATE_NAMES.get(state, "available"),
+        # The daemon's priority is for protocol de-duplication, not RF signal.
+        strength=0,
+        wfd_capable=True,
+        status=STATE_NAMES.get(state, "available"),
+        protocol=protocol,
+    )
+
+
+class GnomeNetworkDisplaysService:
+    """Client for the UI-independent GNOME Network Displays 0.99 daemon."""
+
+    def __init__(self, bus=None, daemon_path=None):
+        if bus is None:
+            import dbus
+
+            bus = dbus.SessionBus()
+        self.bus = bus
+        self.daemon_path = daemon_path or self._find_daemon()
+        self._process = None
+
+    @staticmethod
+    def _find_daemon(here=None):
+        here = Path(here or __file__).resolve()
+        candidates = [
+            os.environ.get("MIRDISPO_DAEMON"),
+            # Installed: <prefix>/lib/mirdispo/mirdispo/gnd.py sits beside
+            # <prefix>/libexec, whatever the prefix. This covers the .deb,
+            # the Flatpak under /app and make install into /usr/local or
+            # ~/.local.
+            here.parents[3] / "libexec" / "mirdispo-daemon",
+            # A checkout, after make backend.
+            here.parents[2] / "vendor" / "amd64" / "mirdispo-daemon",
+            "/usr/libexec/mirdispo-daemon",
+        ]
+        return next((str(item) for item in candidates if item and Path(item).is_file()), None)
+
+    def _dbus(self):
+        import dbus
+
+        obj = self.bus.get_object(SERVICE, PATH)
+        return dbus.Interface(obj, INTERFACE), dbus.Interface(obj, PROPERTIES)
+
+    def running(self) -> bool:
+        import dbus
+
+        proxy = self.bus.get_object("org.freedesktop.DBus", "/org/freedesktop/DBus")
+        return bool(dbus.Interface(proxy, "org.freedesktop.DBus").NameHasOwner(SERVICE))
+
+    def ensure_running(self):
+        if self.running():
+            return
+        if not self.daemon_path:
+            raise RuntimeError("Network display backend is not installed")
+        self._process = subprocess.Popen(
+            [self.daemon_path],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+    def release(self):
+        """Stop the engine if this process started it.
+
+        The engine is started in its own session so that a cast survives the
+        window being closed. With nothing being cast it has no reason to
+        outlive the window, and inside Flatpak it would keep its sandbox,
+        and the version it was started from, alive after an update.
+        """
+        if self._process is not None and self._process.poll() is None:
+            self._process.terminate()
+            try:
+                self._process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+        self._process = None
+
+    def displays(self) -> list[DisplayDevice]:
+        _, properties = self._dbus()
+        raw = properties.Get(INTERFACE, "Displays")
+        return [display_from_dbus(dict(item)) for item in raw]
+
+    def start_stream(self, uuid: str) -> str:
+        manager, _ = self._dbus()
+        result = manager.StartStream(uuid)
+        return str(result)
+
+    def stop_stream(self, unit_name: str):
+        manager, _ = self._dbus()
+        manager.StopStream(unit_name)
+
+    def stream_state(self, unit_name: str) -> str | None:
+        """What the stream helper reports: "wait-p2p", "wait-socket",
+        "wait-streaming", "streaming" and so on (patch 0012), or None when
+        the helper cannot be asked."""
+        import dbus
+
+        name = stream_bus_name(unit_name)
+        if not name:
+            return None
+        try:
+            if not self._name_has_owner(name):
+                return None
+            actions = dbus.Interface(self.bus.get_object(name, "/" + name.replace(".", "/")),
+                                     "org.gtk.Actions")
+            _enabled, _parameter, state = actions.Describe("state")
+            return str(state[0]) if state else None
+        except Exception:
+            return None
+
+    def _name_has_owner(self, name: str) -> bool:
+        import dbus
+
+        proxy = self.bus.get_object("org.freedesktop.DBus", "/org/freedesktop/DBus")
+        return bool(dbus.Interface(proxy, "org.freedesktop.DBus").NameHasOwner(name))
+
+    def stream_active(self, unit_name: str) -> bool | None:
+        """Whether the stream helper is running, or None if that is unknown.
+
+        The distinction matters: treating a failed lookup as "not running"
+        started a second helper alongside a live one, and two helpers
+        negotiating with the same receiver is a guaranteed collision.
+        """
+        # A helper holding its D-Bus name is running, wherever it runs. This
+        # is the only check that sees a helper started by an engine in another
+        # Flatpak sandbox instance, such as one left from an earlier start.
+        name = stream_bus_name(unit_name)
+        try:
+            if name and self._name_has_owner(name):
+                return True
+        except Exception:
+            pass
+
+        if in_sandbox():
+            return _stream_process_running(unit_name)
+
+        import dbus
+
+        try:
+            systemd = dbus.Interface(
+                self.bus.get_object("org.freedesktop.systemd1", "/org/freedesktop/systemd1"),
+                "org.freedesktop.systemd1.Manager",
+            )
+            unit_path = systemd.GetUnit(unit_name)
+            properties = dbus.Interface(
+                self.bus.get_object("org.freedesktop.systemd1", unit_path),
+                PROPERTIES,
+            )
+            return str(properties.Get("org.freedesktop.systemd1.Unit", "ActiveState")) in {
+                "activating",
+                "active",
+            }
+        except dbus.exceptions.DBusException as error:
+            # systemd reports a unit it has already cleaned up as NoSuchUnit,
+            # which does mean the helper is gone.
+            if "NoSuchUnit" in str(error) or "not loaded" in str(error):
+                return False
+            return None
+        except Exception:
+            return None
+
+
+def stream_bus_name(unit_name: str) -> str | None:
+    """The D-Bus name a stream helper takes for its unit (patch 0012):
+    gnome-network-displays-stream-<sink>-<connection>.service becomes
+    <prefix>.Stream_<connection>, with dashes as underscores."""
+    suffix = ".service"
+    if not unit_name or not unit_name.endswith(suffix):
+        return None
+    connection = unit_name[: -len(suffix)][-36:]
+    try:
+        import uuid
+
+        uuid.UUID(connection)
+    except ValueError:
+        return None
+    if connection.count("-") != 4:
+        return None
+    return f"{BUS_PREFIX}.Stream_{connection.replace('-', '_')}"
+
+
+def in_sandbox() -> bool:
+    return Path("/.flatpak-info").exists()
+
+
+def _stream_process_running(unit_name: str, proc=Path("/proc")) -> bool | None:
+    """Inside a sandbox the engine runs each stream as its own child and marks
+    it with ND_STREAM_UNIT (patch 0009), so /proc answers what systemd would."""
+    marker = f"ND_STREAM_UNIT={unit_name}".encode()
+    try:
+        entries = list(proc.iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            if marker in (entry / "environ").read_bytes().split(b"\0"):
+                return True
+        except OSError:
+            continue
+    return False

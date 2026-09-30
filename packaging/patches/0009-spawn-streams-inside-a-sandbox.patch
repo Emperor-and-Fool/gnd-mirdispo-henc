@@ -1,0 +1,183 @@
+From: Mirdispo contributors
+Subject: Start the stream helper as a child process inside a Flatpak sandbox
+
+The daemon starts every stream as a transient systemd user unit. From inside
+a Flatpak sandbox that asks the host's systemd to run a path that exists only
+in the sandbox, so no stream can ever start.
+
+When /.flatpak-info exists, the daemon now runs the helper itself with
+GSubprocess. It keeps a table from unit name to process, and StopStream sends
+that process SIGTERM, the signal systemd would have sent. StartStream still
+returns a unit name in the same format, so the D-Bus interface is unchanged.
+The child receives that name as ND_STREAM_UNIT, which lets a client check
+whether its stream is still running without systemd.
+
+The helper path is now taken from the build prefix rather than fixed at
+/usr/libexec, since a Flatpak installs it under /app. Outside a sandbox
+nothing changes.
+
+diff -ruN a/src/meson.build b/src/meson.build
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -141,7 +141,9 @@
+ if build_daemon
+   executable('gnome-network-displays-daemon',
+     gnome_nd_daemon_sources,
+-    c_args: ['-DND_NO_GTK'],
++    c_args: ['-DND_NO_GTK',
++             '-DND_STREAM_HELPER="@0@"'.format(join_paths(get_option('prefix'), 'libexec',
++                                                          'gnome-network-displays-stream'))],
+     dependencies: gnome_nd_daemon_deps,
+     install: true,
+     link_with: [wfd_server, cc_cast_channel],
+diff -ruN a/src/nd-manager.c b/src/nd-manager.c
+--- a/src/nd-manager.c
++++ b/src/nd-manager.c
+@@ -36,6 +36,11 @@
+ 
+   guint                                manager_name_watch_id;
+   guint                                systemd_name_watch_id;
++
++  /* Inside a Flatpak sandbox the helper is run as a child process, since
++   * systemd would start it on the host, where it is not installed. */
++  gboolean                             sandboxed;
++  GHashTable                          *sandboxed_streams; /* unit name -> GSubprocess */
+ };
+ 
+ enum {
+@@ -158,6 +163,55 @@
+   return g_strdup (unit_name);
+ }
+ 
++static void
++sandboxed_stream_exited_cb (GObject      *source,
++                            GAsyncResult *result,
++                            gpointer      user_data)
++{
++  g_autoptr(NdManager) manager = user_data;
++  g_autoptr(GSubprocess) subprocess = g_object_ref (G_SUBPROCESS (source));
++  const gchar *unit_name;
++
++  g_subprocess_wait_finish (subprocess, result, NULL);
++
++  unit_name = g_object_get_data (G_OBJECT (subprocess), "nd-unit-name");
++  if (manager->sandboxed_streams &&
++      g_hash_table_lookup (manager->sandboxed_streams, unit_name) == subprocess)
++    g_hash_table_remove (manager->sandboxed_streams, unit_name);
++}
++
++/* The unit name is still what StartStream returns and StopStream takes, and
++ * the child gets it as ND_STREAM_UNIT, so a client can tell whether that
++ * stream is still running without asking systemd. */
++static gchar *
++nd_manager_start_sandboxed_stream (NdManager   *manager,
++                                   const gchar *uri,
++                                   const gchar *uuid)
++{
++  g_autofree gchar *unit_name = build_stream_unit_name (uuid);
++  g_autoptr(GSubprocessLauncher) launcher = NULL;
++  g_autoptr(GError) error = NULL;
++  GSubprocess *subprocess;
++
++  launcher = g_subprocess_launcher_new (G_SUBPROCESS_FLAGS_NONE);
++  g_subprocess_launcher_setenv (launcher, "ND_STREAM_UNIT", unit_name, TRUE);
++  subprocess = g_subprocess_launcher_spawn (launcher, &error,
++                                            nd_stream_helper_path (), uri, NULL);
++  if (!subprocess)
++    {
++      g_warning ("NdManager: Unable to spawn nd-stream: %s", error->message);
++      return NULL;
++    }
++
++  g_object_set_data_full (G_OBJECT (subprocess), "nd-unit-name",
++                          g_strdup (unit_name), g_free);
++  g_hash_table_insert (manager->sandboxed_streams, g_strdup (unit_name), subprocess);
++  g_subprocess_wait_async (subprocess, NULL, sandboxed_stream_exited_cb,
++                           g_object_ref (manager));
++
++  return g_steal_pointer (&unit_name);
++}
++
+ void
+ nd_manager_stop_transient_unit (NdManager   *manager,
+                                 const gchar *unit_name)
+@@ -173,6 +227,15 @@
+       return;
+     }
+ 
++  if (manager->sandboxed)
++    {
++      GSubprocess *subprocess = g_hash_table_lookup (manager->sandboxed_streams, unit_name);
++
++      if (subprocess)
++        g_subprocess_send_signal (subprocess, SIGTERM);
++      return;
++    }
++
+   nd_dbus_org_freedesktop_systemd1_manager_call_kill_unit_sync (
+     manager->systemd_proxy,
+     unit_name,
+@@ -224,7 +287,10 @@
+   uri = nd_sink_to_uri (sink);
+   g_autofree gchar *name = NULL;
+   g_object_get (sink, "display_name", &name, NULL);
+-  unit_name = nd_manager_start_transient_unit (manager, uri, uuid, name);
++  if (manager->sandboxed)
++    unit_name = nd_manager_start_sandboxed_stream (manager, uri, uuid);
++  else
++    unit_name = nd_manager_start_transient_unit (manager, uri, uuid, name);
+ 
+   if (!unit_name)
+     {
+@@ -336,6 +402,7 @@
+   NdManager *manager = ND_MANAGER (object);
+ 
+   nd_manager_set_provider (manager, NULL);
++  g_clear_pointer (&manager->sandboxed_streams, g_hash_table_unref);
+ 
+   G_OBJECT_CLASS (nd_manager_parent_class)->finalize (object);
+ }
+@@ -470,6 +537,9 @@
+ static void
+ nd_manager_init (NdManager *manager)
+ {
++  manager->sandboxed = g_file_test ("/.flatpak-info", G_FILE_TEST_EXISTS);
++  manager->sandboxed_streams = g_hash_table_new_full (g_str_hash, g_str_equal,
++                                                      g_free, g_object_unref);
+ }
+ 
+ 
+diff -ruN a/src/nd-systemd-helpers.c b/src/nd-systemd-helpers.c
+--- a/src/nd-systemd-helpers.c
++++ b/src/nd-systemd-helpers.c
+@@ -11,11 +11,21 @@
+                           connection_uuid);
+ }
+ 
++#ifndef ND_STREAM_HELPER
++#define ND_STREAM_HELPER "/usr/libexec/gnome-network-displays-stream"
++#endif
++
++const gchar *
++nd_stream_helper_path (void)
++{
++  return ND_STREAM_HELPER;
++}
++
+ static GVariant *
+ build_execstart (const gchar *uuid,
+                  const gchar *uri)
+ {
+-  const gchar *path = "/usr/libexec/gnome-network-displays-stream";
++  const gchar *path = nd_stream_helper_path ();
+ 
+   GVariantBuilder execstart_builder;
+   GVariantBuilder command_builder;
+diff -ruN a/src/nd-systemd-helpers.h b/src/nd-systemd-helpers.h
+--- a/src/nd-systemd-helpers.h
++++ b/src/nd-systemd-helpers.h
+@@ -6,3 +6,4 @@
+                              const gchar *display_name);
+ GVariant * build_aux ();
+ gchar * build_stream_unit_name (const gchar *sink_uuid);
++const gchar * nd_stream_helper_path (void);

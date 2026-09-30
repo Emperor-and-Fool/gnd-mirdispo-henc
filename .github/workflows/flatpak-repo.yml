@@ -1,0 +1,63 @@
+name: Flatpak repository
+
+# Publishes every release to the signed Flatpak repository on GitHub Pages,
+# which is what people install Mirdispo from and what their software centre
+# checks for updates.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: flatpak-repository
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.11
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fetch the published repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git clone --depth 1 --branch gh-pages \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" site \
+            || mkdir -p site
+          rm -rf site/.git
+
+      - name: Import the signing key
+        env:
+          FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
+        run: |
+          test -n "${FLATPAK_GPG_PRIVATE_KEY}" || { echo "The FLATPAK_GPG_PRIVATE_KEY secret is not set" >&2; exit 1; }
+          # The install files hand this public key to everyone who installs.
+          test -f flatpak/mirdispo-repo.gpg || { echo "flatpak/mirdispo-repo.gpg is missing" >&2; exit 1; }
+          mkdir -m 700 "${RUNNER_TEMP}/gnupg"
+          printf '%s\n' "${FLATPAK_GPG_PRIVATE_KEY}" | gpg --homedir "${RUNNER_TEMP}/gnupg" --batch --import
+
+      - name: Build, sign and update the repository
+        run: packaging/publish-flatpak-repo.sh site "${{ secrets.FLATPAK_GPG_KEY_ID }}" "${RUNNER_TEMP}/gnupg"
+
+      - name: Publish to GitHub Pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd site
+          # One commit, replaced on every release: the repository keeps the
+          # versions it needs itself, so the branch needs no history.
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Publish ${GITHUB_REF_NAME}"
+          git push -q --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages

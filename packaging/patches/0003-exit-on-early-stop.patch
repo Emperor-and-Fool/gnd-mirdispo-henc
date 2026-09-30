@@ -1,0 +1,28 @@
+From: Mirdispo contributors
+Subject: Exit when a stream is stopped before portal setup completes
+
+SIGTERM may arrive before the portal callback has installed a sink state
+handler. Stopping the sink alone then leaves the process alive indefinitely.
+Cancel pending setup, stop the sink when present, and always quit the
+application.
+
+--- a/src/stream/nd-stream.c
++++ b/src/stream/nd-stream.c
+@@ -553,7 +553,16 @@
+ {
+   g_debug ("NdStream: Received %s signal. Exiting...", signal_name);
+ 
+-  nd_sink_stop_stream (self->sink);
++  if (self->cancellable)
++    g_cancellable_cancel (self->cancellable);
++
++  if (self->sink)
++    nd_sink_stop_stream (self->sink);
++
++  /* A signal can arrive before the portal session has completed. In that
++   * case no sink state handler is connected yet, so stopping the sink alone
++   * does not cause the application to exit. */
++  g_application_quit (G_APPLICATION (self));
+ 
+   return G_SOURCE_REMOVE;
+ }

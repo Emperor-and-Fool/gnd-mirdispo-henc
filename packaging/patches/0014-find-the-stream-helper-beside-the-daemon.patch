@@ -1,0 +1,48 @@
+From: Mirdispo contributors
+Subject: Find the stream helper beside the daemon
+
+The daemon runs the stream helper from a path fixed at build time, from the
+installation prefix (patch 0009). Installed under any other prefix, or run
+from where it was built, the daemon started a helper that was not there or
+belonged to another installation, and no stream could start.
+
+The helper is installed next to the daemon, so the daemon now looks for it in
+its own directory first, found through /proc/self/exe, and falls back to the
+configured path. Installations in the configured prefix behave as before.
+
+diff -ruN a/src/nd-systemd-helpers.c b/src/nd-systemd-helpers.c
+--- a/src/nd-systemd-helpers.c
++++ b/src/nd-systemd-helpers.c
+@@ -15,10 +15,31 @@
+ #define ND_STREAM_HELPER "/usr/libexec/gnome-network-displays-stream"
+ #endif
+ 
++/* The helper is installed next to the daemon, so it is looked for there
++ * first. That keeps the pair working wherever it is installed, including a
++ * prefix other than the one it was built for and a build directory, and
++ * falls back to the configured path. */
+ const gchar *
+ nd_stream_helper_path (void)
+ {
+-  return ND_STREAM_HELPER;
++  static gchar *path = NULL;
++
++  if (g_once_init_enter_pointer (&path))
++    {
++      g_autofree gchar *self = g_file_read_link ("/proc/self/exe", NULL);
++      g_autofree gchar *dir = self ? g_path_get_dirname (self) : NULL;
++      g_autofree gchar *beside = dir ? g_build_filename (dir, "gnome-network-displays-stream", NULL) : NULL;
++      gchar *found;
++
++      if (beside && g_file_test (beside, G_FILE_TEST_IS_EXECUTABLE))
++        found = g_steal_pointer (&beside);
++      else
++        found = g_strdup (ND_STREAM_HELPER);
++
++      g_once_init_leave_pointer (&path, found);
++    }
++
++  return path;
+ }
+ 
+ static GVariant *

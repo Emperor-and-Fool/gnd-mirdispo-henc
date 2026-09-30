@@ -1,0 +1,259 @@
+# Flatpak manifest for Mirdispo.
+#
+# The library modules below are adapted from the Flatpak manifest that ships
+# with GNOME Network Displays (build-aux/flatpak), by its authors, updated to
+# the versions in the KDE 6.11 runtime and trimmed to what the daemon needs
+# now that it is built without GTK.
+#
+# Build and install locally with:
+#   flatpak run org.flatpak.Builder --user --install --force-clean \
+#       work/flatpak-build flatpak/io.github.hencyber.Mirdispo.yml
+
+id: io.github.hencyber.Mirdispo
+runtime: org.kde.Platform
+runtime-version: '6.11'
+sdk: org.kde.Sdk
+base: com.riverbankcomputing.PyQt.BaseApp
+base-version: '6.11'
+command: mirdispo
+
+finish-args:
+  - --share=ipc
+  - --share=network        # RTSP to the receiver and the stream itself
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --socket=pulseaudio    # sends the desktop's sound to the receiver
+  - --system-talk-name=org.freedesktop.NetworkManager   # Wi-Fi Direct
+  - --system-talk-name=org.freedesktop.Avahi            # receivers on the network
+  - --system-talk-name=org.fedoraproject.FirewallD1     # reports a blocking firewall
+  - --talk-name=org.kde.StatusNotifierWatcher          # the system tray icon
+  - --talk-name=org.freedesktop.Notifications           # "still running in the tray"
+
+# The PyQt base app carries Qt WebEngine, WebView and PDF, which Mirdispo never
+# loads. Removing them takes the download from about 110 MB to a few MB.
+cleanup-commands:
+  # The first removes itself, the second removes both scripts.
+  - /app/cleanup-BaseApp-QtWebEngine.sh
+  - /app/cleanup-BaseApp.sh
+  - rm -rf /app/lib/${FLATPAK_ARCH}-linux-gnu/libQt6WebEngine* /app/lib/${FLATPAK_ARCH}-linux-gnu/libQt6Pdf*
+    /app/lib/libQt6WebEngine* /app/lib/libexec /app/bin/QtWebEngineProcess /app/resources
+    /app/translations/qtwebengine_locales /app/qtwebengine_dictionaries /app/share/runtime/locale/*/share/*/qtwebengine*
+    /app/lib/qml/QtWebEngine /app/lib/qml/QtQuick/Pdf /app/lib/python3*/site-packages/PyQt6/QtWebEngine*
+    /app/lib/python3*/site-packages/PyQt6/QtPdf* /app/lib/python3*/site-packages/PyQt6-WebEngine* /app/lib/python3*/site-packages/PyQt6_WebEngine*
+    /app/lib/${FLATPAK_ARCH}-linux-gnu/libQt6WebView* /app/lib/qml/QtWebView /app/lib/python3*/site-packages/pyqt6_webengine-*
+    /app/lib/python3*/site-packages/pyqt_builder-*
+
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /share/man
+  - '*.la'
+  - '*.a'
+
+modules:
+  - name: avahi
+    config-opts:
+      - --with-distro=none
+      - --disable-nls
+      - --disable-libevent
+      - --disable-gdbm
+      - --disable-introspection
+      - --disable-qt3
+      - --disable-qt4
+      - --disable-qt5
+      - --disable-gtk
+      - --disable-gtk3
+      - --disable-core-docs
+      - --disable-manpages
+      - --disable-libdaemon
+      - --disable-python
+      - --disable-pygobject
+      - --disable-mono
+      - --disable-monodoc
+      - --disable-autoipd
+      - --disable-doxygen-doc
+      - --disable-xmltoman
+    cleanup:
+      - /bin
+      - /lib/avahi
+      - /share/applications
+      - /share/avahi
+    sources:
+      - type: archive
+        url: https://www.avahi.org/download/avahi-0.8.tar.gz
+        sha256: 060309d7a333d38d951bc27598c677af1796934dbd98e1024e7ad8de798fedda
+
+  - name: gst-rtsp-server
+    buildsystem: meson
+    config-opts:
+      - -Ddoc=disabled
+      - -Dexamples=disabled
+      - -Dtests=disabled
+      - -Dintrospection=disabled
+    sources:
+      - type: archive
+        url: https://gstreamer.freedesktop.org/src/gst-rtsp-server/gst-rtsp-server-1.26.11.tar.xz
+        sha256: b61d4304d8ceaaaa1ba139fb1ce935f04f1a73d7e18243c0a05b2fb04305406f
+
+  - name: libprotobuf-c
+    config-opts:
+      - --disable-protoc
+    sources:
+      - type: archive
+        url: https://github.com/protobuf-c/protobuf-c/releases/download/v1.5.2/protobuf-c-1.5.2.tar.gz
+        sha256: e2c86271873a79c92b58fef7ebf8de1aa0df4738347a8bd5d4e65a80a16d0d24
+
+  - name: libndp
+    cleanup:
+      - /bin
+    sources:
+      - type: archive
+        url: https://github.com/jpirko/libndp/archive/v1.9.tar.gz
+        sha256: e564f5914a6b1b799c3afa64c258824a801c1b79a29e2fe6525b682249c65261
+
+  # Only libnm is kept; the rest of NetworkManager is removed after the build.
+  - name: NetworkManager
+    buildsystem: meson
+    build-options:
+      cflags: -ltinfo
+      cxxflags: -ltinfo
+    config-opts:
+      - -Dsystemdsystemunitdir=no
+      - -Ddbus_conf_dir=/app/etc/dbus-1/system.d
+      - -Diptables=/usr/bin/true
+      - -Ddnsmasq=/usr/bin/true
+      - -Dsession_tracking=no
+      - -Dselinux=false
+      - -Dsystemd_journal=false
+      - -Dlibaudit=no
+      - -Dwext=false
+      - -Dwifi=true
+      - -Dppp=false
+      - -Dmodem_manager=false
+      - -Dovs=false
+      - -Dnmcli=false
+      - -Dnmtui=false
+      - -Dintrospection=false
+      - -Dvapi=false
+      - -Ddocs=false
+      - -Dtests=no
+      - -Dfirewalld_zone=false
+      - -Dlibpsl=false
+      - -Dqt=false
+      - -Dnm_cloud_setup=false
+      - -Dpolkit=false
+      - -Dconcheck=false
+      - -Dteamdctl=false
+      - -Dofono=false
+      - -Diwd=false
+      - -Debpf=false
+      - -Difupdown=false
+      - -Dcrypto=null
+      - -Dreadline=none
+    cleanup:
+      - /bin
+      - /etc
+      - /lib/NetworkManager
+      - /libexec
+      - /sbin
+      - /share
+      - /var
+    sources:
+      - type: git
+        url: https://gitlab.freedesktop.org/NetworkManager/NetworkManager.git
+        tag: 1.52.2
+        commit: 57a409441bef013f636ac8e72836c19ecb27c1b9
+
+  - name: libportal
+    buildsystem: meson
+    config-opts:
+      - -Dbackend-gtk3=disabled
+      - -Dbackend-gtk4=disabled
+      - -Dbackend-qt5=disabled
+      - -Dbackend-qt6=disabled
+      - -Dintrospection=false
+      - -Dvapi=false
+      - -Ddocs=false
+      - -Dtests=false
+    sources:
+      - type: archive
+        url: https://github.com/flatpak/libportal/releases/download/0.11.0/libportal-0.11.0.tar.xz
+        sha256: abb9e452a1c372133bd3eb8f0bb30d07b2d0a8fb02001c4155cf287555db4040
+
+  - name: dbus-python
+    buildsystem: meson
+    config-opts:
+      - -Dtests=disabled
+    sources:
+      - type: archive
+        url: https://files.pythonhosted.org/packages/07/4a/7639053065589ebdb59edd2582884201416ebfcb7a9e1d6c54da50072729/dbus_python-1.5.0.tar.gz
+        sha256: ac94ce330879108e5d37105164cc14b595bdf9326d2ce4a5acad6c1ab2bf6476
+
+  # Only for the diagnostics page, which asks GStreamer which elements exist.
+  - name: pygobject
+    buildsystem: meson
+    config-opts:
+      - -Dpycairo=disabled
+      - -Dtests=false
+    sources:
+      - type: archive
+        url: https://files.pythonhosted.org/packages/a3/9b/473a5234ec86bce978d3583adc62441c84cc57181c4ea8a8978997c7f0c1/pygobject-3.58.0.tar.gz
+        sha256: 45068697de3ffe46840ca369705f23118b34db4f7deb63f6eff079a6734ddcca
+
+  # The casting engine: GNOME Network Displays 0.99.0 with this project's
+  # patches, built without GTK and under this application's D-Bus prefix.
+  - name: gnome-network-displays
+    buildsystem: meson
+    config-opts:
+      - -Dbuild_app=false
+      - -Dfirewalld_zone=false
+      - -Dbus_prefix=io.github.hencyber.Mirdispo
+    post-install:
+      - mv ${FLATPAK_DEST}/bin/gnome-network-displays-daemon ${FLATPAK_DEST}/libexec/mirdispo-daemon
+    sources:
+      - type: archive
+        path: ../vendor/source/gnome-network-displays-0.99.0.tar.xz
+        sha256: 1ece4a1bc822c7ebf725e8847b8ce8998b47d1ec1715a4b4ddb9ddd71691ed85
+      - type: patch
+        paths:
+          - ../packaging/patches/0001-prefer-software-encoding.patch
+          - ../packaging/patches/0002-use-unique-stream-units.patch
+          - ../packaging/patches/0003-exit-on-early-stop.patch
+          - ../packaging/patches/0004-fix-pulseaudio-async-ownership.patch
+          - ../packaging/patches/0005-fix-meta-provider-uaf-and-cc-recursion.patch
+          - ../packaging/patches/0006-reuse-screencast-permission.patch
+          - ../packaging/patches/0007-choose-the-mode-from-both-ends.patch
+          - ../packaging/patches/0008-build-the-daemon-without-gtk.patch
+          - ../packaging/patches/0009-spawn-streams-inside-a-sandbox.patch
+          - ../packaging/patches/0010-make-the-bus-name-prefix-configurable.patch
+          - ../packaging/patches/0011-keep-the-screencast-permission-in-a-sandbox.patch
+          - ../packaging/patches/0012-publish-the-stream-state-on-d-bus.patch
+          - ../packaging/patches/0013-report-a-stream-the-user-ended.patch
+          - ../packaging/patches/0014-find-the-stream-helper-beside-the-daemon.patch
+
+  - name: mirdispo
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 bin/mirdispo ${FLATPAK_DEST}/bin/mirdispo
+      - install -d ${FLATPAK_DEST}/lib/mirdispo
+      - cp -R src/mirdispo ${FLATPAK_DEST}/lib/mirdispo/
+      - find ${FLATPAK_DEST}/lib/mirdispo -name __pycache__ -prune -exec rm -rf {} +
+      - install -Dm644 io.github.hencyber.Mirdispo.desktop -t ${FLATPAK_DEST}/share/applications
+      - install -Dm644 io.github.hencyber.Mirdispo.metainfo.xml -t ${FLATPAK_DEST}/share/metainfo
+      - for size in 16 32 48 64 128 256 512; do install -Dm644 assets/icons/hicolor/${size}x${size}/apps/io.github.hencyber.Mirdispo.png
+        -t ${FLATPAK_DEST}/share/icons/hicolor/${size}x${size}/apps; done
+      - install -Dm644 LICENSE -t ${FLATPAK_DEST}/share/licenses/io.github.hencyber.Mirdispo
+      # What the GPL asks for: who wrote what, and the source of the engine
+      # with every change made to it.
+      - install -Dm644 packaging/copyright README.md -t ${FLATPAK_DEST}/share/doc/mirdispo
+      - install -Dm644 vendor/source/gnome-network-displays-0.99.0.tar.xz packaging/patches/*.patch
+        -t ${FLATPAK_DEST}/share/doc/mirdispo
+    sources:
+      - type: dir
+        path: ..
+        skip:
+          - work
+          - outputs
+          - vendor/amd64
+          - .git

@@ -1,0 +1,46 @@
+From: Mirdispo contributors
+Subject: Prefer software encoding over VA-API
+
+Stopping a cast can abort inside the VA-API media driver: a free() in the
+driver, reached from vaTerminate() as GStreamer releases the VA
+context, reported by glibc as "double free or corruption".
+
+This was first seen with an earlier build and blamed on heap corruption
+elsewhere in this project. That corruption was real -- a g_autofree variable
+freed without ever being initialised, in the PulseAudio teardown -- and
+fixing it was worth doing. Hardware encoding was then restored on the
+argument that the driver had been the victim rather than the cause. The
+abort came back, with a stack that reaches libc's allocator directly from
+the driver's own teardown and passes through nothing belonging to this
+project.
+
+Nothing in this process can prevent a fault in that code, so the encoder
+that does not reach it is selected first. VA encoders remain in the table as
+fallbacks for machines without x264. The cost is real, since software
+encoding takes far more processor time than a hardware encoder, but a cast
+that ends without taking the session down is worth more.
+
+--- a/src/wfd/wfd-media-factory.h
++++ b/src/wfd/wfd-media-factory.h
+@@ -50,6 +50,21 @@
+ /* video encoder, audio encoder, muxer */
+ static const WfdMediaFactoryProfile wfd_media_factory_profiles[] = {
+   /* video + audio profiles */
++  /* Software encoding first.
++   *
++   * Stopping a cast aborted inside the VA-API media driver: a free() in the
++   * driver, reached from vaTerminate() when GStreamer released the VA
++   * context, with the message "double free or corruption". This was blamed
++   * once on heap corruption elsewhere in this project, which did exist and
++   * was fixed; hardware encoding was then restored and the abort came back
++   * with the fault entirely inside the driver's own teardown. Nothing in
++   * this process can prevent it, so the encoder that does not reach that
++   * code is used. VA encoders stay as fallbacks for machines without x264.
++   */
++  {PROFILE_HIGH_H264,    ELEMENT_X264,       ELEMENT_AAC_FDK,    ELEMENT_MPEGTS},
++  {PROFILE_HIGH_H264,    ELEMENT_X264,       ELEMENT_AAC_AVENC,  ELEMENT_MPEGTS},
++  {PROFILE_HIGH_H264,    ELEMENT_X264,       ELEMENT_AAC_FAAC,   ELEMENT_MPEGTS},
++  {PROFILE_HIGH_H264,    ELEMENT_X264,       ELEMENT_AUDIO_NONE, ELEMENT_MPEGTS},
+   {PROFILE_HIGH_H264,    ELEMENT_VAH264,     ELEMENT_AAC_FDK,    ELEMENT_MPEGTS},
+   {PROFILE_HIGH_H264,    ELEMENT_VAH264,     ELEMENT_AAC_AVENC,  ELEMENT_MPEGTS},
+   {PROFILE_HIGH_H264,    ELEMENT_VAH264,     ELEMENT_AAC_FAAC,   ELEMENT_MPEGTS},

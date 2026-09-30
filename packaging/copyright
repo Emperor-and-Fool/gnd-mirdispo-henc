@@ -1,0 +1,56 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Mirdispo
+Source: https://github.com/GNOME/gnome-network-displays
+Comment: The streaming backend is derived from GNOME Network Displays. The
+ Plasma front end is new work by this project.
+
+Files: *
+Copyright: 2026 Mirdispo contributors
+License: GPL-3+
+
+Files: usr/libexec/mirdispo-daemon usr/libexec/gnome-network-displays-stream
+Copyright: 2018 Benjamin Berg <bberg@redhat.com>
+ 2022-2024 Christian Glombek <lorbus@fedoraproject.org>
+ 2022-2023 Anupam Kumar <kyteinsky@gmail.com>
+ 2023-2024 Pedro Sader Azevedo <pedro.saderazevedo@proton.me>
+ 2019 The Chromium Authors
+ 2008 Wim Taymans <wim.taymans@gmail.com>
+ GNOME Network Displays contributors
+License: GPL-3+
+Comment: Modified in September 2026 and built from GNOME Network Displays
+ 0.99.0. The modifications are the fourteen patches installed alongside this file,
+ covering encoder selection, stream unit naming, shutdown, PulseAudio teardown,
+ a use-after-free in receiver discovery, reuse of the screen sharing
+ permission, choosing the streamed display mode from both ends of the link,
+ building without GTK, running streams inside a Flatpak sandbox, a
+ configurable D-Bus name prefix, keeping the screen sharing permission
+ inside a Flatpak sandbox, publishing each stream's state on D-Bus,
+ reporting a stream the user ended from the desktop, and finding the stream
+ helper beside the daemon. The complete upstream source archive is installed at
+ /usr/share/doc/mirdispo/gnome-network-displays-0.99.0.tar.xz;
+ applying the patches to it in numerical order reproduces the source these
+ binaries were built from.
+
+Files: usr/libexec/mirdispo-daemon
+Copyright: 2015 Red Hat, Inc.
+ 2014 Andrea Scarpino
+License: LGPL-2.1+
+Comment: The systemd Manager D-Bus interface description the daemon is
+ generated from, which GNOME Network Displays took from Flatpak.
+
+License: GPL-3+
+ This package is free software: you can redistribute it and/or modify it under
+ the terms of the GNU General Public License as published by the Free Software
+ Foundation, either version 3 of the License, or any later version.
+ .
+ On Debian systems, the complete text of the GNU General Public License version
+ 3 can be found in /usr/share/common-licenses/GPL-3.
+
+License: LGPL-2.1+
+ This library is free software; you can redistribute it and/or modify it under
+ the terms of the GNU Lesser General Public License as published by the Free
+ Software Foundation; either version 2.1 of the License, or (at your option)
+ any later version.
+ .
+ On Debian systems, the complete text of the GNU Lesser General Public License
+ version 2.1 can be found in /usr/share/common-licenses/LGPL-2.1.

@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deb:
+    name: Tests and Debian package
+    runs-on: ubuntu-latest
+    container: ubuntu:26.04
+    steps:
+      - name: Install build and test dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates git build-essential meson ninja-build pkg-config patch xz-utils \
+            binutils dpkg-dev gettext desktop-file-utils appstream \
+            libglib2.0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            libgstrtspserver-1.0-dev libnm-dev libportal-dev libpulse-dev \
+            libjson-glib-dev libsoup-3.0-dev libprotobuf-c-dev \
+            libavahi-client-dev libavahi-gobject-dev \
+            python3 python3-pyqt6 python3-pyqt6.qtqml python3-dbus python3-gi \
+            gir1.2-gstreamer-1.0 qml6-module-org-kde-kirigami qml6-module-org-kde-desktop \
+            qml6-module-qtquick-layouts qml6-module-qtquick-controls \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
+            gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-pipewire
+
+      - uses: actions/checkout@v7
+
+      - name: Build the casting engine from upstream source and patches
+        run: make backend
+
+      - name: Run the Python and C tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: make test
+
+      - name: Start the interface in demo mode
+        run: make smoke
+
+      - name: Validate desktop entry and AppStream metadata
+        run: |
+          desktop-file-validate io.github.hencyber.Mirdispo.desktop
+          appstreamcli validate --no-net io.github.hencyber.Mirdispo.metainfo.xml
+
+      - name: Build the Debian package
+        run: packaging/build-deb.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mirdispo-deb
+          path: outputs/*.deb
+
+  flatpak:
+    name: Flatpak
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.11
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: mirdispo.flatpak
+          manifest-path: flatpak/io.github.hencyber.Mirdispo.yml
+          cache-key: flatpak-builder-${{ github.sha }}

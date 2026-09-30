@@ -1,0 +1,275 @@
+From: Mirdispo contributors
+Subject: Build the daemon and the stream helper without GTK
+
+Both linked GTK 4, libadwaita and libportal-gtk4 without drawing anything.
+The only GTK call they made was gtk_string_list_new(), which fills the
+missing-video-codec and missing-audio-codec properties. Only the graphical
+app reads those, to offer installing a codec. Pulling a toolkit and its
+theme library into a background service for that makes it heavier to
+install, and much heavier to ship in a sandbox whose runtime has no GTK.
+
+The lists are now built by nd_codec_list_new(). In the app it still returns
+a GtkStringList. In the daemon and the stream helper, which are compiled
+with ND_NO_GTK, it returns NULL. GTK, libadwaita and libportal-gtk4 are only
+required when the app is built. The stream helper uses plain libportal,
+since it never passes a parent window to the portal.
+
+The icon cache and desktop database are only updated when the app is
+built, since nothing else installs icons or a desktop file. On a system
+without that cache the update failed and stopped the install.
+
+The app builds and behaves as before.
+
+diff -ruN a/meson.build b/meson.build
+--- a/meson.build
++++ b/meson.build
+@@ -39,7 +39,10 @@
+   subdir('po')
+ endif
+ 
+-gnome.post_install(
+-  gtk_update_icon_cache: true,
+-  update_desktop_database: true,
+-)
++# Only the app installs icons and a desktop file to update caches for.
++if build_app
++  gnome.post_install(
++    gtk_update_icon_cache: true,
++    update_desktop_database: true,
++  )
++endif
+diff -ruN a/src/meson.build b/src/meson.build
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -49,13 +49,22 @@
+   dependency('gstreamer-pbutils-1.0', version: '>= 1.14'),
+   dependency('gstreamer-plugins-base-1.0'),
+   dependency('gstreamer-rtsp-server-1.0'),
+-  dependency('gtk4', version: '>= 4.13.0'),
+   dependency('libnm', version: '>= 1.15'),
+-  dependency('libportal-gtk4', version: '>= 0.7'),
++  dependency('libportal', version: '>= 0.7'),
+   dependency('libpulse-mainloop-glib'),
+-  dependency('libadwaita-1', version: '>= 1.6.0'),
+ ]
+ 
++# Only the graphical app uses GTK. The daemon and the stream helper are built
++# without it, so they can run where GTK is not installed.
++gnome_nd_gtk_deps = []
++if build_app
++  gnome_nd_gtk_deps = [
++    dependency('gtk4', version: '>= 4.13.0'),
++    dependency('libportal-gtk4', version: '>= 0.7'),
++    dependency('libadwaita-1', version: '>= 1.6.0'),
++  ]
++endif
++
+ if get_option('systemd_resolved')
+   gnome_nd_common_deps += [
+     dependency('libsystemd', version: '>=259')
+@@ -127,16 +136,19 @@
+ 
+ gnome_nd_app_deps = []
+ gnome_nd_app_deps += gnome_nd_common_deps
++gnome_nd_app_deps += gnome_nd_gtk_deps
+ 
+ if build_daemon
+   executable('gnome-network-displays-daemon',
+     gnome_nd_daemon_sources,
++    c_args: ['-DND_NO_GTK'],
+     dependencies: gnome_nd_daemon_deps,
+     install: true,
+     link_with: [wfd_server, cc_cast_channel],
+   )
+   executable('gnome-network-displays-stream',
+     gnome_nd_stream_sources,
++    c_args: ['-DND_NO_GTK'],
+     dependencies: gnome_nd_stream_deps,
+     install: true,
+     link_with: [wfd_server, cc_cast_channel],
+diff -ruN a/src/nd-cc-sink.c b/src/nd-cc-sink.c
+--- a/src/nd-cc-sink.c
++++ b/src/nd-cc-sink.c
+@@ -33,8 +33,8 @@
+ 
+   GCancellable  *cancellable;
+ 
+-  GtkStringList *missing_video_codec;
+-  GtkStringList *missing_audio_codec;
++  GListModel    *missing_video_codec;
++  GListModel    *missing_audio_codec;
+   char          *missing_firewall_zone;
+ 
+   gchar         *uuid;
+@@ -411,8 +411,8 @@
+   g_clear_object (&self->missing_video_codec);
+   g_clear_object (&self->missing_audio_codec);
+ 
+-  self->missing_video_codec = gtk_string_list_new ((const char *const *) missing_video);
+-  self->missing_audio_codec = gtk_string_list_new ((const char *const *) missing_audio);
++  self->missing_video_codec = nd_codec_list_new ((const char *const *) missing_video);
++  self->missing_audio_codec = nd_codec_list_new ((const char *const *) missing_audio);
+ 
+   g_object_notify (G_OBJECT (self), "missing-video-codec");
+   g_object_notify (G_OBJECT (self), "missing-audio-codec");
+diff -ruN a/src/nd-dummy-cc-sink.c b/src/nd-dummy-cc-sink.c
+--- a/src/nd-dummy-cc-sink.c
++++ b/src/nd-dummy-cc-sink.c
+@@ -31,8 +31,8 @@
+ 
+   gchar         *uuid;
+ 
+-  GtkStringList *missing_video_codec;
+-  GtkStringList *missing_audio_codec;
++  GListModel    *missing_video_codec;
++  GListModel    *missing_audio_codec;
+   char          *missing_firewall_zone;
+ 
+   CcHttpServer  *http_server;
+@@ -265,8 +265,8 @@
+   g_clear_object (&self->missing_video_codec);
+   g_clear_object (&self->missing_audio_codec);
+ 
+-  self->missing_video_codec = gtk_string_list_new ((const char *const *) missing_video);
+-  self->missing_audio_codec = gtk_string_list_new ((const char *const *) missing_audio);
++  self->missing_video_codec = nd_codec_list_new ((const char *const *) missing_video);
++  self->missing_audio_codec = nd_codec_list_new ((const char *const *) missing_audio);
+ 
+   g_object_notify (G_OBJECT (self), "missing-video-codec");
+   g_object_notify (G_OBJECT (self), "missing-audio-codec");
+diff -ruN a/src/nd-dummy-wfd-sink.c b/src/nd-dummy-wfd-sink.c
+--- a/src/nd-dummy-wfd-sink.c
++++ b/src/nd-dummy-wfd-sink.c
+@@ -32,8 +32,8 @@
+ 
+   gchar         *uuid;
+ 
+-  GtkStringList *missing_video_codec;
+-  GtkStringList *missing_audio_codec;
++  GListModel    *missing_video_codec;
++  GListModel    *missing_audio_codec;
+ 
+   WfdServer     *server;
+   WfdClient     *wfd_client;
+@@ -276,8 +276,8 @@
+   g_clear_object (&self->missing_video_codec);
+   g_clear_object (&self->missing_audio_codec);
+ 
+-  self->missing_video_codec = gtk_string_list_new ((const char *const *) missing_video);
+-  self->missing_audio_codec = gtk_string_list_new ((const char *const *) missing_audio);
++  self->missing_video_codec = nd_codec_list_new ((const char *const *) missing_video);
++  self->missing_audio_codec = nd_codec_list_new ((const char *const *) missing_audio);
+ 
+   g_object_notify (G_OBJECT (self), "missing-video-codec");
+   g_object_notify (G_OBJECT (self), "missing-audio-codec");
+diff -ruN a/src/nd-sink.c b/src/nd-sink.c
+--- a/src/nd-sink.c
++++ b/src/nd-sink.c
+@@ -20,6 +20,10 @@
+ #include <gst/gst.h>
+ #include "gnome-network-displays-config.h"
+ #include "nd-sink.h"
++
++#ifndef ND_NO_GTK
++#include <gtk/gtk.h>
++#endif
+ #include "nd-enum-types.h"
+ 
+ typedef NdSinkIface NdSinkInterface;
+@@ -156,3 +160,13 @@
+ 
+   return iface->to_uri (sink);
+ }
++
++GListModel *
++nd_codec_list_new (const char *const *names)
++{
++#ifdef ND_NO_GTK
++  return NULL;
++#else
++  return G_LIST_MODEL (gtk_string_list_new (names));
++#endif
++}
+diff -ruN a/src/nd-sink.h b/src/nd-sink.h
+--- a/src/nd-sink.h
++++ b/src/nd-sink.h
+@@ -18,7 +18,7 @@
+ 
+ #pragma once
+ 
+-#include <gtk/gtk.h>
++#include <gio/gio.h>
+ #include <glib-object.h>
+ #include "nd-enum-types.h"
+ 
+@@ -79,4 +79,8 @@
+ 
+ G_DEFINE_AUTOPTR_CLEANUP_FUNC (NdSink, g_object_unref)
+ 
++/* The codecs a sink would need, for the graphical app to offer installing
++ * them. Builds without GTK have no such app and get NULL. */
++GListModel *nd_codec_list_new (const char *const *names);
++
+ G_END_DECLS
+diff -ruN a/src/nd-wfd-mice-sink.c b/src/nd-wfd-mice-sink.c
+--- a/src/nd-wfd-mice-sink.c
++++ b/src/nd-wfd-mice-sink.c
+@@ -31,8 +31,8 @@
+ 
+   GCancellable      *cancellable;
+ 
+-  GtkStringList     *missing_video_codec;
+-  GtkStringList     *missing_audio_codec;
++  GListModel        *missing_video_codec;
++  GListModel        *missing_audio_codec;
+   char              *missing_firewall_zone;
+ 
+   gchar             *uuid;
+@@ -513,8 +513,8 @@
+   g_clear_object (&self->missing_video_codec);
+   g_clear_object (&self->missing_audio_codec);
+ 
+-  self->missing_video_codec = gtk_string_list_new ((const char *const *) missing_video);
+-  self->missing_audio_codec = gtk_string_list_new ((const char *const *) missing_audio);
++  self->missing_video_codec = nd_codec_list_new ((const char *const *) missing_video);
++  self->missing_audio_codec = nd_codec_list_new ((const char *const *) missing_audio);
+ 
+   g_object_notify (G_OBJECT (self), "missing-video-codec");
+   g_object_notify (G_OBJECT (self), "missing-audio-codec");
+diff -ruN a/src/nd-wfd-p2p-sink.c b/src/nd-wfd-p2p-sink.c
+--- a/src/nd-wfd-p2p-sink.c
++++ b/src/nd-wfd-p2p-sink.c
+@@ -39,8 +39,8 @@
+ 
+   gchar              *uuid;
+ 
+-  GtkStringList      *missing_video_codec;
+-  GtkStringList      *missing_audio_codec;
++  GListModel         *missing_video_codec;
++  GListModel         *missing_audio_codec;
+   char               *missing_firewall_zone;
+ 
+   WfdServer          *server;
+@@ -443,8 +443,8 @@
+   g_clear_object (&sink->missing_video_codec);
+   g_clear_object (&sink->missing_audio_codec);
+ 
+-  sink->missing_video_codec = gtk_string_list_new ((const char *const *) missing_video);
+-  sink->missing_audio_codec = gtk_string_list_new ((const char *const *) missing_audio);
++  sink->missing_video_codec = nd_codec_list_new ((const char *const *) missing_video);
++  sink->missing_audio_codec = nd_codec_list_new ((const char *const *) missing_audio);
+ 
+   g_object_notify (G_OBJECT (sink), "missing-video-codec");
+   g_object_notify (G_OBJECT (sink), "missing-audio-codec");
+diff -ruN a/src/stream/nd-stream.c b/src/stream/nd-stream.c
+--- a/src/stream/nd-stream.c
++++ b/src/stream/nd-stream.c
+@@ -21,7 +21,7 @@
+ #include <avahi-gobject/ga-service-browser.h>
+ #include <glib/gi18n.h>
+ #include <glib-unix.h>
+-#include <libportal-gtk4/portal-gtk4.h>
++#include <libportal/portal.h>
+ #include <gst/base/base.h>
+ #include <gst/gst.h>
+ 

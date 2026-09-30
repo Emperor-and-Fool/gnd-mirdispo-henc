@@ -1,0 +1,75 @@
+From: Mirdispo contributors
+Subject: Use a unique transient unit for every stream attempt
+
+A failed or stopped transient unit can remain loaded in the user systemd
+manager. Reusing the sink UUID as the unit name then makes a later attempt
+silently target that stale unit. Give every attempt a unique name and return
+a D-Bus error if systemd did not actually create a job.
+
+--- a/src/nd-systemd-helpers.h
++++ b/src/nd-systemd-helpers.h
+@@ -5,3 +5,4 @@
+                              const gchar *uri,
+                              const gchar *display_name);
+ GVariant * build_aux ();
++gchar * build_stream_unit_name (const gchar *sink_uuid);
+--- a/src/nd-systemd-helpers.c
++++ b/src/nd-systemd-helpers.c
+@@ -1,6 +1,16 @@
+ #include <gio/gio.h>
+ #include <glib-object.h>
+ 
++gchar *
++build_stream_unit_name (const gchar *sink_uuid)
++{
++  g_autofree gchar *connection_uuid = g_uuid_string_random ();
++
++  return g_strdup_printf ("gnome-network-displays-stream-%s-%s.service",
++                          sink_uuid,
++                          connection_uuid);
++}
++
+ static GVariant *
+ build_execstart (const gchar *uuid,
+                  const gchar *uri)
+--- a/src/nd-manager.c
++++ b/src/nd-manager.c
+@@ -126,7 +126,7 @@
+                                  const gchar *uuid,
+                                  const gchar *display_name)
+ {
+-  g_autofree gchar *unit_name = g_strdup_printf ("gnome-network-displays-stream-%s.service", uuid);
++  g_autofree gchar *unit_name = build_stream_unit_name (uuid);
+ 
+   g_autoptr(GError) error = NULL;
+ 
+@@ -149,8 +149,11 @@
+     &error);
+ 
+   if (!job)
+-    g_warning ("NdManager: Unable to spawn nd-stream with StartTransientUnit: %s",
+-               error ? error->message : "none");
++    {
++      g_warning ("NdManager: Unable to spawn nd-stream with StartTransientUnit: %s",
++                 error ? error->message : "none");
++      return NULL;
++    }
+ 
+   return g_strdup (unit_name);
+ }
+@@ -223,6 +226,15 @@
+   g_object_get (sink, "display_name", &name, NULL);
+   unit_name = nd_manager_start_transient_unit (manager, uri, uuid, name);
+ 
++  if (!unit_name)
++    {
++      g_dbus_method_invocation_return_error (invocation,
++                                             G_IO_ERROR,
++                                             G_IO_ERROR_FAILED,
++                                             "Unable to start the streaming service");
++      return G_DBUS_METHOD_INVOCATION_HANDLED;
++    }
++
+   nd_dbus_manager_complete_start_stream (manager->manager_proxy, invocation, unit_name);
+ 
+   return G_DBUS_METHOD_INVOCATION_HANDLED;

@@ -1,0 +1,196 @@
+From: Mirdispo contributors
+Subject: Publish each stream's state on D-Bus under a name its client can find
+
+A client that starts a stream learns its unit name and nothing else. Whether
+the helper is still running has to be asked of systemd, or inside a Flatpak
+sandbox of /proc, which only shows processes in the same sandbox instance.
+Neither says whether the receiver is getting a picture yet. The helper does
+know that, as its sink's state, but kept it to itself.
+
+The daemon now hands the unit name to the helper as ND_STREAM_UNIT, through
+the transient unit's Environment property or the child's environment. The
+helper names itself <bus prefix>.Stream_<connection id>, taken from the unit
+name, so the client can compute the name from what StartStream returned. The
+helper publishes its sink's state (wait-p2p, wait-socket, wait-streaming,
+streaming, ...) as the state of a "state" action, which GApplication exports
+through org.gtk.Actions. A helper started without ND_STREAM_UNIT keeps the
+random name it had before.
+
+D-Bus names are seen by the whole session, so this works across sandbox
+instances as well as outside a sandbox.
+
+diff -ruN a/src/nd-manager.c b/src/nd-manager.c
+--- a/src/nd-manager.c
++++ b/src/nd-manager.c
+@@ -140,7 +140,7 @@
+   GVariant *properties;
+   GVariant *aux;
+ 
+-  properties = build_properties (uuid, uri, display_name);
++  properties = build_properties (unit_name, uri, display_name);
+   aux = build_aux ();
+ 
+   nd_dbus_org_freedesktop_systemd1_manager_call_start_transient_unit_sync (
+diff -ruN a/src/nd-systemd-helpers.c b/src/nd-systemd-helpers.c
+--- a/src/nd-systemd-helpers.c
++++ b/src/nd-systemd-helpers.c
+@@ -61,11 +61,12 @@
+ }
+ 
+ GVariant *
+-build_properties (const gchar *uuid,
++build_properties (const gchar *unit_name,
+                   const gchar *uri,
+                   const gchar *display_name)
+ {
+   GVariantBuilder properties_builder;
++  GVariantBuilder environment_builder;
+ 
+   GVariant *properties;
+   GVariant *execstart;
+@@ -73,9 +74,17 @@
+ 
+   g_variant_builder_init (&properties_builder, G_VARIANT_TYPE ("a(sv)"));
+ 
+-  execstart = build_execstart (uuid, uri);
++  execstart = build_execstart (unit_name, uri);
+   g_variant_builder_add (&properties_builder, "(sv)", "ExecStart", execstart);
+ 
++  /* The helper names itself on D-Bus after its unit, so a client holding the
++   * unit name can find it and read its state. */
++  g_variant_builder_init (&environment_builder, G_VARIANT_TYPE ("as"));
++  g_variant_builder_add_value (&environment_builder,
++                               g_variant_new_take_string (g_strdup_printf ("ND_STREAM_UNIT=%s", unit_name)));
++  g_variant_builder_add (&properties_builder, "(sv)", "Environment",
++                         g_variant_builder_end (&environment_builder));
++
+   description = build_description (display_name);
+   g_variant_builder_add (&properties_builder, "(sv)", "Description", description);
+ 
+diff -ruN a/src/nd-systemd-helpers.h b/src/nd-systemd-helpers.h
+--- a/src/nd-systemd-helpers.h
++++ b/src/nd-systemd-helpers.h
+@@ -1,7 +1,7 @@
+ #include <gio/gio.h>
+ #include <glib-object.h>
+ 
+-GVariant * build_properties (const gchar *uuid,
++GVariant * build_properties (const gchar *unit_name,
+                              const gchar *uri,
+                              const gchar *display_name);
+ GVariant * build_aux ();
+diff -ruN a/src/stream/nd-stream.c b/src/stream/nd-stream.c
+--- a/src/stream/nd-stream.c
++++ b/src/stream/nd-stream.c
+@@ -21,6 +21,7 @@
+ #include <avahi-gobject/ga-service-browser.h>
+ #include <glib/gi18n.h>
+ #include <glib-unix.h>
++#include <string.h>
+ #include <libportal/portal.h>
+ #include <gst/base/base.h>
+ #include <gst/gst.h>
+@@ -48,6 +49,7 @@
+   gboolean               shutting_down;
+ 
+   NdSink                *sink;
++  GSimpleAction         *state_action;
+ };
+ 
+ enum {
+@@ -389,11 +391,18 @@
+     }
+ 
+   g_clear_object (&self->cancellable);
++  g_clear_object (&self->state_action);
+ }
+ 
+ static void
+ nd_stream_startup (GApplication *app)
+ {
++  NdStream *self = ND_STREAM (app);
++
++  self->state_action = g_simple_action_new_stateful ("state", NULL,
++                                                     g_variant_new_string ("starting"));
++  g_action_map_add_action (G_ACTION_MAP (app), G_ACTION (self->state_action));
++
+   g_debug ("NdStream: Startup");
+   /* Run indefinitely, until told to exit. */
+   g_application_hold (app);
+@@ -435,6 +444,20 @@
+   g_object_class_install_properties (object_class, PROP_LAST, props);
+ }
+ 
++/* The sink's state is published as the state of the "state" action, which
++ * GApplication exports on D-Bus through org.gtk.Actions. A client can read it
++ * with Describe ("state") and so tell a stream that is still negotiating
++ * from one that is delivering a picture, whatever the protocol. */
++static void
++nd_stream_publish_state (NdStream *self, NdSinkState state)
++{
++  g_autoptr(GEnumClass) klass = g_type_class_ref (ND_TYPE_SINK_STATE);
++  GEnumValue *value = g_enum_get_value (klass, state);
++
++  if (self->state_action && value)
++    g_simple_action_set_state (self->state_action, g_variant_new_string (value->value_nick));
++}
++
+ static void
+ sink_notify_state_cb (NdStream *self, GParamSpec *pspec, NdSink *sink)
+ {
+@@ -443,6 +466,7 @@
+   g_object_get (sink, "state", &state, NULL);
+   g_debug ("NdStream: State changed to %s",
+            g_enum_to_string (ND_TYPE_SINK_STATE, state));
++  nd_stream_publish_state (self, state);
+ 
+   switch (state)
+     {
+@@ -702,12 +726,35 @@
+   g_source_attach (self->sigint_source, NULL);
+ }
+ 
++/* Started for a unit, the helper is named after the connection part of the
++ * unit name, gnome-network-displays-stream-<sink>-<connection>.service, so
++ * that whoever started it can find it. Otherwise the name is random, as
++ * before. */
++gchar *
++nd_stream_application_id (const gchar *unit_name)
++{
++  g_autofree gchar *uuid = NULL;
++  const gchar *suffix = ".service";
++  gsize length;
++
++  if (unit_name && g_str_has_suffix (unit_name, suffix) &&
++      (length = strlen (unit_name) - strlen (suffix)) > 36)
++    {
++      uuid = g_strndup (unit_name + length - 36, 36);
++      if (g_uuid_string_is_valid (uuid))
++        return g_strdup_printf (ND_BUS_PREFIX ".Stream_%s", g_strdelimit (uuid, "-", '_'));
++    }
++
++  g_free (uuid);
++  uuid = g_uuid_string_random ();
++  return g_strdup_printf (ND_BUS_PREFIX ".Stream_%.8s", uuid);
++}
++
+ NdStream *
+ nd_stream_new ()
+ {
+   NdStream *stream;
+-  g_autofree gchar *uuid = g_uuid_string_random ();
+-  g_autofree gchar *id = g_strdup_printf (ND_BUS_PREFIX ".Stream_%.8s", uuid);
++  g_autofree gchar *id = nd_stream_application_id (g_getenv ("ND_STREAM_UNIT"));
+ 
+   g_debug ("NdStream: Starting with app-id: %s", id);
+   stream = g_object_new (ND_TYPE_STREAM,
+diff -ruN a/src/stream/nd-stream.h b/src/stream/nd-stream.h
+--- a/src/stream/nd-stream.h
++++ b/src/stream/nd-stream.h
+@@ -28,5 +28,6 @@
+ G_DECLARE_FINAL_TYPE (NdStream, nd_stream, ND, STREAM, GApplication)
+ 
+ NdStream * nd_stream_new ();
++gchar * nd_stream_application_id (const gchar *unit_name);
+ 
+ G_END_DECLS

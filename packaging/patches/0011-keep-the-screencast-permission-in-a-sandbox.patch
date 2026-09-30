@@ -1,0 +1,44 @@
+From: Mirdispo contributors
+Subject: Keep the screen sharing permission for the login session inside Flatpak
+
+Patch 0006 stores the portal's restore token in the runtime directory, so a
+cast is not asked which screen to share again during the same login session.
+Inside a Flatpak sandbox the runtime directory is created anew every time the
+application starts, so the token was lost when the application closed and the
+portal asked again on the next start.
+
+Flatpak keeps $XDG_RUNTIME_DIR/app/$FLATPAK_ID for the whole login session and
+shares it between starts of the application. Inside a sandbox the token is now
+stored there, so it lasts exactly as long as it does outside one. Outside a
+sandbox nothing changes.
+
+diff -ruN a/src/stream/nd-stream.c b/src/stream/nd-stream.c
+--- a/src/stream/nd-stream.c
++++ b/src/stream/nd-stream.c
+@@ -276,10 +276,25 @@
+  * the chooser of the attempt before it, which the user sees as "Screencast
+  * canceled" and as being asked the same question over and over. The token is
+  * kept in the runtime directory, so it lasts for the login session and no
+- * longer. */
++ * longer.
++ *
++ * Inside a Flatpak sandbox the runtime directory is created anew for every
++ * start of the application, which would forget the token each time. Flatpak
++ * keeps $XDG_RUNTIME_DIR/app/$FLATPAK_ID for the whole login session instead,
++ * so the token goes there and lasts exactly as long as it does outside. */
+ static gchar *
+ nd_stream_restore_token_path (void)
+ {
++  const gchar *flatpak_id = g_getenv ("FLATPAK_ID");
++
++  if (flatpak_id && flatpak_id[0] != '\0' &&
++      g_file_test ("/.flatpak-info", G_FILE_TEST_EXISTS))
++    return g_build_filename (g_get_user_runtime_dir (),
++                             "app",
++                             flatpak_id,
++                             "screencast-restore-token",
++                             NULL);
++
+   return g_build_filename (g_get_user_runtime_dir (),
+                            "mirdispo",
+                            "screencast-restore-token",

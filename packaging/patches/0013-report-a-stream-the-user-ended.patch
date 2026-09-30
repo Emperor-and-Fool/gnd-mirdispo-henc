@@ -1,0 +1,76 @@
+From: Mirdispo contributors
+Subject: Report a stream the user ended from the desktop
+
+When the user stops sharing from the desktop, for instance with Plasma's
+screen sharing indicator, the portal closes the session and the helper
+exits. To its client that looks exactly like a dropped link, which a client
+reasonably restarts. With a restore token the restart needs no confirmation,
+so the screen would be shared again against the user's decision.
+
+When the portal closes the session, the helper now publishes the state
+"ended" (patch 0012) and keeps it instead of the sink states that follow. It
+stays running for 15 seconds after the sink disconnects, so a client polling
+every couple of seconds can see why the stream stopped. A client that stops
+it with StopStream ends it at once, as before. Every other way a stream ends
+is unchanged.
+
+diff -ruN a/src/stream/nd-stream.c b/src/stream/nd-stream.c
+--- a/src/stream/nd-stream.c
++++ b/src/stream/nd-stream.c
+@@ -50,6 +50,7 @@
+ 
+   NdSink                *sink;
+   GSimpleAction         *state_action;
++  gboolean               ended_by_user;
+ };
+ 
+ enum {
+@@ -182,11 +183,23 @@
+   return g_steal_pointer (&src);
+ }
+ 
++/* The portal closes the session when the user stops sharing from the
++ * desktop, for instance from Plasma's screen sharing indicator. That is the
++ * user's decision, not a lost link, and a client that restarted the stream
++ * would share the screen again against it. The helper therefore reports
++ * "ended" and stays reachable for a while, so the client can see why the
++ * stream stopped before it exits. */
++#define ND_STREAM_ENDED_LINGER_SECONDS 15
++
+ void
+ session_closed_cb (NdStream * self, NdSink * sink)
+ {
+   g_debug ("NdStream: Session closed cb");
+ 
++  self->ended_by_user = TRUE;
++  if (self->state_action)
++    g_simple_action_set_state (self->state_action, g_variant_new_string ("ended"));
++
+   if (self->sink)
+     nd_sink_stop_stream (self->sink);
+ 
+@@ -466,7 +479,8 @@
+   g_object_get (sink, "state", &state, NULL);
+   g_debug ("NdStream: State changed to %s",
+            g_enum_to_string (ND_TYPE_SINK_STATE, state));
+-  nd_stream_publish_state (self, state);
++  if (!self->ended_by_user)
++    nd_stream_publish_state (self, state);
+ 
+   switch (state)
+     {
+@@ -496,6 +510,14 @@
+     case ND_SINK_STATE_DISCONNECTED:
+       g_debug ("NdStream: Sink disconnected");
+ 
++      if (self->ended_by_user)
++        {
++          g_debug ("NdStream: Ended by the user, quitting in %d s", ND_STREAM_ENDED_LINGER_SECONDS);
++          g_timeout_add_seconds_once (ND_STREAM_ENDED_LINGER_SECONDS,
++                                      (GSourceOnceFunc) g_application_quit, self);
++          break;
++        }
++
+       /* Quit the application */
+       g_debug ("NdStream: Quitting");
+       g_application_quit (G_APPLICATION (self));
