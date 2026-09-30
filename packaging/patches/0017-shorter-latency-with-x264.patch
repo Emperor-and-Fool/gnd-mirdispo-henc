@@ -1,0 +1,40 @@
+From: Mirdispo contributors
+Subject: Use a shorter pipeline latency with x264
+
+The pipeline latency is fixed at 500 ms, for OpenH264, whose latency spikes
+after scene changes. Every packet is sent that long after it was captured,
+so it is felt directly as the receiver lagging behind the desktop.
+
+x264, which is preferred (patch 0001), is configured for zero latency with
+no lookahead and no B-frames and has no such spikes. With x264 the latency
+is now 150 ms. The other encoders keep 500 ms.
+
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -499,12 +499,23 @@
+ {
+   GstElement *pipeline;
+ 
++  WfdMediaFactory *self = WFD_MEDIA_FACTORY (factory);
++  WfdGstElement encoder = wfd_media_factory_profiles[self->factory_profile].video_encoder;
++
+   pipeline = GST_RTSP_MEDIA_FACTORY_CLASS (wfd_media_factory_parent_class)->create_pipeline (factory, media);
+ 
+   /* We need a high latency for the openh264 encoder at least when the
+    * usage-type is set to "screen". After e.g. scene changes the latency will
+-   * be very high for short periods of time, and this prevents further issues. */
+-  gst_pipeline_set_latency (GST_PIPELINE (pipeline), 500 * GST_MSECOND);
++   * be very high for short periods of time, and this prevents further issues.
++   *
++   * Every packet is sent that much after it was captured, so the latency is
++   * felt as the receiver lagging behind the desktop. x264 is configured for
++   * zero latency with no lookahead and no B-frames, and does not have those
++   * spikes, so it gets a much shorter one. */
++  if (encoder == ELEMENT_X264)
++    gst_pipeline_set_latency (GST_PIPELINE (pipeline), 150 * GST_MSECOND);
++  else
++    gst_pipeline_set_latency (GST_PIPELINE (pipeline), 500 * GST_MSECOND);
+ 
+   return pipeline;
+ }

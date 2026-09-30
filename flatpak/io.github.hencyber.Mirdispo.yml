@@ -231,6 +231,8 @@ modules:
           - ../packaging/patches/0013-report-a-stream-the-user-ended.patch
           - ../packaging/patches/0014-find-the-stream-helper-beside-the-daemon.patch
           - ../packaging/patches/0015-send-the-desktop-sound-to-the-receiver.patch
+          - ../packaging/patches/0016-capture-sound-in-larger-periods.patch
+          - ../packaging/patches/0017-shorter-latency-with-x264.patch
 
   - name: mirdispo
     buildsystem: simple

@@ -1,0 +1,35 @@
+From: Mirdispo contributors
+Subject: Capture the sound in larger periods
+
+The receiver's sound stuttered. pulsesrc asks for 10 ms periods by default,
+so the sound server drives the graph around the stream's null sink in
+periods of 256 samples. Neither the audio grabber nor the players feeding
+the sink kept up with that: both recorded underruns by the hundred within
+minutes, each one a gap in what the receiver plays.
+
+The grabber now asks for 40 ms periods and a 400 ms buffer, which lets the
+graph run at the period players already ask for. That is small next to the
+latency of the stream itself.
+
+diff -ruN a/src/nd-pulseaudio.c b/src/nd-pulseaudio.c
+--- a/src/nd-pulseaudio.c
++++ b/src/nd-pulseaudio.c
+@@ -584,10 +584,18 @@
+ 
+   g_autofree gchar *device_name = g_strdup_printf (ND_PA_SINK "_%.8s.monitor", self->uuid);
+   g_autofree gchar *client_name = g_strdup_printf ("GNOME Network Displays Audio Grabber for %s", self->name);
++  /* With pulsesrc's default 10 ms period the sound server runs the whole
++   * graph around the sink in periods of 256 samples, which neither this
++   * source nor the players feeding the sink keep up with: both record
++   * underruns, heard as a stutter on the receiver. A 40 ms period lets the
++   * graph run at the period players already ask for, and costs nothing
++   * next to the latency of the stream itself. */
+   g_object_set (src,
+                 "device", device_name,
+                 "client-name", client_name,
+                 "do-timestamp", TRUE,
++                "latency-time", (gint64) 40000,
++                "buffer-time", (gint64) 400000,
+                 "server", pa_context_get_server (self->context),
+                 NULL);
+ 

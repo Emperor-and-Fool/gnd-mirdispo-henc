@@ -89,7 +89,18 @@ The stream helper creates a virtual output named after the receiver and sends
 what plays into it to the receiver as AAC. For the length of the cast that
 output is made the default, so the desktop's sound goes to the receiver
 without the user choosing a device, and the previous default is restored when
-the cast ends (patch 0015).
+the cast ends (patch 0015). The sound is captured in 40 ms periods (patch
+0016): with the default 10 ms the sound server ran the graph in periods too
+short for the capture and the players to keep up with, and the receiver's
+sound stuttered.
+
+## Delay
+
+Every packet leaves a fixed pipeline latency after it was captured, so that
+latency is how far the receiver trails the desktop. It is 500 ms for OpenH264,
+whose latency spikes after scene changes, and 150 ms for x264, which is
+configured for zero latency (patch 0017). The receiver adds its own buffering
+on top.
 
 ## Screen sharing permission
 
