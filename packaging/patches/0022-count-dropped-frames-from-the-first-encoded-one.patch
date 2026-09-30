@@ -1,0 +1,53 @@
+From: Mirdispo contributors
+Subject: Count dropped frames from the first encoded one
+
+The report of patch 0019 counted frames captured while the session was still
+being set up, which never reach the encoder, and so reported drops that did
+not happen at the start of every cast. Counting now starts with the first
+encoded frame.
+
+The report also named how late the slowest frame was. In a live session
+that measurement read zero every time, so it is left out.
+
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -40,7 +40,6 @@
+   /* What was captured and what was encoded, to report dropped frames. */
+   gint             frames_in;
+   guint            frames_out;
+-  GstClockTimeDiff worst_late;
+   GstClockTime     report_at;
+ } QOSData;
+ 
+@@ -110,9 +109,12 @@
+       /* Dropped frames are what makes the picture jump. Say so, so that a
+        * stuttering picture can be told apart from a slow receiver or link. */
+       qos_data->frames_out++;
+-      qos_data->worst_late = MAX (qos_data->worst_late, late);
+       if (qos_data->report_at == 0)
+         {
++          /* Frames captured while the session was still being set up never
++           * reach the encoder, and are not drops. Count from here. */
++          g_atomic_int_set (&qos_data->frames_in, 1);
++          qos_data->frames_out = 1;
+           qos_data->report_at = now + WFD_QOS_REPORT_INTERVAL;
+         }
+       else if (now >= qos_data->report_at)
+@@ -121,14 +123,11 @@
+ 
+           /* A couple of frames are always on their way through. */
+           if (captured > (gint) qos_data->frames_out + 2)
+-            g_message ("WfdMediaFactory: %d of %d frames in the last %d s were dropped to keep up; "
+-                       "the slowest took %" G_GINT64_FORMAT " ms",
++            g_message ("WfdMediaFactory: %d of %d frames in the last %d s were dropped to keep up",
+                        captured - (gint) qos_data->frames_out, captured,
+-                       (gint) (WFD_QOS_REPORT_INTERVAL / GST_SECOND),
+-                       qos_data->worst_late / GST_MSECOND);
++                       (gint) (WFD_QOS_REPORT_INTERVAL / GST_SECOND));
+ 
+           qos_data->frames_out = 0;
+-          qos_data->worst_late = 0;
+           qos_data->report_at = now + WFD_QOS_REPORT_INTERVAL;
+         }
+     }

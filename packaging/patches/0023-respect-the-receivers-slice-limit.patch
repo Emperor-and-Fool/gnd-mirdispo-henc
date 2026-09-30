@@ -1,0 +1,43 @@
+From: Mirdispo contributors
+Subject: Respect the receiver's limit on slices per picture
+
+Patch 0018 had x264 encode four slices per picture. A receiver states how
+many slices it takes, and a min-slice-size of 0, which many televisions
+send, means it does not take several. Four slices worked on the receivers
+tried, but went beyond what the others promised.
+
+x264 now encodes as many slices as the receiver takes, up to four, each in
+its own thread, and a single slice in one thread for a receiver that takes
+only one. A single slice of 1080p still encodes in about 5 ms, well inside
+the pipeline latency.
+
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -700,11 +700,12 @@
+                     "tune", 0x4, /* zero latency */
+                     "speed-preset", 1, /* ultrafast */
+                     "rc-lookahead", 1,
+-                    /* Four slices, each encoded by its own thread. Sliced
+-                     * threading adds no frame of delay, unlike frame
+-                     * threading, and cuts the time a frame takes to encode,
+-                     * so bursts of motion no longer make it late. */
+-                    "threads", 4,
++                    /* Up to four slices, each encoded by its own thread.
++                     * Sliced threading adds no frame of delay, unlike frame
++                     * threading, and cuts the time a frame takes to encode.
++                     * A receiver that does not take several slices per
++                     * picture gets one. */
++                    "threads", (guint) CLAMP (codec->max_slice_num, 1, 4),
+                     "vbv-buf-capacity", 50,
+                     "dct8x8", FALSE,
+                     "ref", 1,
+@@ -717,7 +718,7 @@
+                     "interlaced", resolution->interlaced,
+                     "bitrate",  bitrate_kbit,
+                     "insert-vui", TRUE,
+-                    "sliced-threads", TRUE,
++                    "sliced-threads", codec->max_slice_num > 1,
+                     NULL);
+       break;
+ 

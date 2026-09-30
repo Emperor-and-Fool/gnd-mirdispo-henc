@@ -44,6 +44,13 @@
     <category>AudioVideo</category>
   </categories>
   <releases>
+    <release version="3.6.0" date="2026-10-01">
+      <description>
+        <p>Receivers that can show full HD at 60 frames per second in the H.264 high profile now get it, twice as smooth as before at the same resolution. Mirdispo used to limit every receiver to the baseline profile.</p>
+        <p>The picture reaches the receiver about 70 ms sooner.</p>
+        <p>Receivers that take only one slice per picture get one, as they ask for.</p>
+      </description>
+    </release>
     <release version="3.5.0" date="2026-10-01">
       <description>
         <p>Smoother and sharper motion. The picture no longer skips frames when you play video, drag windows or move the pointer, and it stays sharp while it moves, at the same resolution as before.</p>

@@ -236,6 +236,11 @@ modules:
           - ../packaging/patches/0018-encode-video-in-parallel.patch
           - ../packaging/patches/0019-drop-frames-only-when-they-would-be-late.patch
           - ../packaging/patches/0020-raise-the-video-bitrate-limit.patch
+          - ../packaging/patches/0021-send-sooner-with-x264.patch
+          - ../packaging/patches/0022-count-dropped-frames-from-the-first-encoded-one.patch
+          - ../packaging/patches/0023-respect-the-receivers-slice-limit.patch
+          - ../packaging/patches/0024-use-the-high-profile-when-it-gives-a-better-mode.patch
+          - ../packaging/patches/0025-fix-two-cea-modes.patch
 
   - name: mirdispo
     buildsystem: simple

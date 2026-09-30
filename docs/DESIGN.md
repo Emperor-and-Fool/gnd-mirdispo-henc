@@ -101,22 +101,37 @@ televisions take 1080p at 30 frames per second only, so motion there can never
 be as smooth as on a 120 Hz laptop screen without a lower resolution, which
 Mirdispo does not choose on the user's behalf. Within that limit:
 
+- A receiver lists its modes per H.264 profile, and a television can offer
+  1080p at 60 Hz in the constrained high profile while its constrained
+  baseline entry stops at 30 Hz. Baseline is used unless another entry the
+  encoder can produce shows the source better (patch 0024). With the high
+  profile x264 uses CABAC and the 8x8 transform, which compress better at the
+  same bitrate. Every entry a receiver offers is logged.
 - Scaling, colour conversion and x264 run in parallel (patch 0018). x264
-  encodes four slices in parallel, which adds no frame of delay.
+  encodes as many slices as the receiver takes, up to four, which adds no
+  frame of delay; a receiver that takes one slice gets one (patch 0023).
 - A frame that leaves the encoder too late makes the pipeline drop frames to
   catch up, which is seen as the picture jumping. With x264 that happens only
   from 100 ms after capture, since packets are sent 150 ms after capture
   anyway (patch 0019). Dropped frames are reported in the journal.
 - The bitrate is capped at 10 Mbit/s rather than 4 (patch 0020), so a moving
-  1080p picture does not smear.
+  1080p picture does not smear. The cap grows with the refresh rate, so a
+  60 Hz frame gets as many bits as a 30 Hz one (patch 0024).
 
 ## Delay
 
 Every packet leaves a fixed pipeline latency after it was captured, so that
 latency is how far the receiver trails the desktop. It is 500 ms for OpenH264,
-whose latency spikes after scene changes, and 150 ms for x264, which is
-configured for zero latency (patch 0017). The receiver adds its own buffering
-on top.
+whose latency spikes after scene changes, and 80 ms for x264, which is
+configured for zero latency (patches 0017 and 0021). Measured with sound, a
+frame then leaves about 35 ms after capture.
+
+The receiver adds its own delay on top. GStreamer's MPEG-TS muxer stamps
+every frame to be shown 125 ms after the clock reference it sends, a fixed
+value in the muxer, and the television then spends its own time decoding and
+processing the picture. The 125 ms is left alone: it is the receiver's margin
+for a Wi-Fi link that delivers a packet late now and then, and taking it away
+turns such a moment into a visible stutter.
 
 ## Screen sharing permission
 

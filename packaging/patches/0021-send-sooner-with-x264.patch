@@ -1,0 +1,44 @@
+From: Mirdispo contributors
+Subject: Send sooner with x264
+
+The receiver trailed the desktop visibly when playing video. With x264 the
+pipeline latency was 150 ms (patch 0017), and measured with sound included a
+frame left about 100 to 116 ms after capture. At 80 ms it leaves about 35 ms
+after capture, and the frames leave no less evenly: the spread between them
+comes from the sound arriving in 40 ms periods, not from the latency. At
+60 ms the largest gap between two frames grew to 100 ms in one of three
+runs, so 80 ms is kept.
+
+A frame that reaches the sink after its time is still sent at once, so the
+drop budget of patch 0019 stays at 100 ms.
+
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -340,9 +340,9 @@
+   encoding_perf = gst_element_factory_make ("identity", "wfd-measure-encoder-realtime");
+   success &= gst_bin_add (bin, encoding_perf);
+   qos_data = g_new0 (QOSData, 1);
+-  /* x264 runs with zero latency tuning and a 150 ms pipeline latency, so a
+-   * frame 100 ms after capture is still sent in time. The other encoders
+-   * keep the 50 ms they had. */
++  /* x264 runs with zero latency tuning and a short pipeline latency, and a
++   * frame that is late at the sink is still sent at once, so dropping is
++   * kept for frames far behind. The other encoders keep the 50 ms they had. */
+   if (wfd_media_factory_profiles[self->factory_profile].video_encoder == ELEMENT_X264)
+     qos_data->budget = 100 * GST_MSECOND;
+   else
+@@ -585,9 +585,11 @@
+    * Every packet is sent that much after it was captured, so the latency is
+    * felt as the receiver lagging behind the desktop. x264 is configured for
+    * zero latency with no lookahead and no B-frames, and does not have those
+-   * spikes, so it gets a much shorter one. */
++   * spikes, so it gets a much shorter one: measured with sound included,
++   * 80 ms sends a frame about 35 ms after capture, where 150 ms took over
++   * 100 ms, and the frames leave no less evenly. */
+   if (encoder == ELEMENT_X264)
+-    gst_pipeline_set_latency (GST_PIPELINE (pipeline), 150 * GST_MSECOND);
++    gst_pipeline_set_latency (GST_PIPELINE (pipeline), 80 * GST_MSECOND);
+   else
+     gst_pipeline_set_latency (GST_PIPELINE (pipeline), 500 * GST_MSECOND);
+ 

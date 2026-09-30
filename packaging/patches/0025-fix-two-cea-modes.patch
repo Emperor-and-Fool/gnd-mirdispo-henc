@@ -1,0 +1,27 @@
+From: Mirdispo contributors
+Subject: Fix two entries in the CEA mode table
+
+Bit 10 of the CEA table is 1280x720p25, which the table spelled 1290x720.
+Bit 16 is 1920x1080p24, which the table gave as 1920x1080p25, a second copy
+of bit 12. A receiver that offers 1080p24 would have been sent a 25 Hz
+stream in a session it agreed to at 24 Hz, had that mode been chosen.
+
+diff -ruN a/src/wfd/wfd-video-codec.c b/src/wfd/wfd-video-codec.c
+--- a/src/wfd/wfd-video-codec.c
++++ b/src/wfd/wfd-video-codec.c
+@@ -14,13 +14,13 @@
+   {1920, 1080, 30, FALSE},
+   {1920, 1080, 60, FALSE},
+   {1920, 1080, 60, TRUE},
+-  {1290,  720, 25, FALSE},
++  {1280,  720, 25, FALSE},
+   {1280,  720, 50, FALSE},
+   {1920, 1080, 25, FALSE},
+   {1920, 1080, 50, FALSE},
+   {1920, 1080, 50, TRUE},
+   {1280,  720, 24, FALSE},
+-  {1920, 1080, 25, FALSE},
++  {1920, 1080, 24, FALSE},
+   {3840, 2160, 24, FALSE},
+   {3840, 2160, 25, FALSE},
+   {3840, 2160, 30, FALSE},

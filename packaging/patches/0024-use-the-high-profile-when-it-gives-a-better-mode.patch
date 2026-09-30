@@ -1,0 +1,335 @@
+From: Mirdispo contributors
+Subject: Use the constrained high profile when it gives a better mode
+
+A receiver lists the modes it decodes per H.264 profile, and a television
+can take 1080p at 60 Hz in the constrained high profile while its
+constrained baseline entry stops at 30 Hz. The client always chose the
+baseline entry ("XXX: Pick the better profile if we have an encoder that
+supports it!"), and logged only that entry's modes, so a 60 Hz full HD mode
+was never used or even seen.
+
+wfd_client_choose_codec() now picks between the entries. Baseline stays in
+use unless an entry the encoder can produce shows the source better: more of
+it, or the same at a higher refresh rate. x264 and the VA encoders produce
+the high profile; only OpenH264 is limited to baseline. Every entry the
+receiver offers is logged, with its profile and level.
+
+With the high profile x264 now uses the tools that make it compress better
+than baseline at the same bitrate, CABAC and the 8x8 transform. The bitrate
+limit grows with the refresh rate, so a 60 Hz frame gets as many bits as a
+30 Hz one, within the receiver's announced maximum.
+
+diff -ruN a/src/wfd/wfd-client.c b/src/wfd/wfd-client.c
+--- a/src/wfd/wfd-client.c
++++ b/src/wfd/wfd-client.c
+@@ -207,80 +207,206 @@
+   return best;
+ }
+ 
++static const gchar *
++wfd_profile_name (WfdH264ProfileFlags profile)
++{
++  return (profile & WFD_H264_PROFILE_BASE) ? "constrained baseline" : "constrained high";
++}
++
++static const gchar *
++wfd_level_name (guint8 level)
++{
++  switch (level)
++    {
++    case 1: return "3.1";
++    case 1 << 1: return "3.2";
++    case 1 << 2: return "4";
++    case 1 << 3: return "4.1";
++    case 1 << 4: return "4.2";
++    case 1 << 5: return "5";
++    case 1 << 6: return "5.1";
++    case 1 << 7: return "5.2";
++    default: return "unknown";
++    }
++}
++
++/* The mode that would be used from one of the receiver's codec entries.
++ *
++ * Its CEA modes come first. A receiver advertises three tables: CEA holds
++ * the timings consumer televisions are built to display, VESA the computer
++ * monitor ones, HH the handheld ones. Taking the largest mode across all
++ * three sent a television 1920x1200, a monitor shape it accepted but had to
++ * resynchronise for, which showed as the picture flashing. A receiver that
++ * offers CEA modes is saying which timings it is made for.
++ */
++static WfdResolution *
++wfd_client_best_mode (WfdVideoCodec *codec, gint width, gint height)
++{
++  g_autoptr(GList) preferred = wfd_video_codec_get_resolutions_cea (codec);
++  g_autoptr(GList) all = NULL;
++  WfdResolution *best = wfd_client_pick_resolution (preferred, width, height);
++
++  if (!best)
++    {
++      all = wfd_video_codec_get_resolutions (codec);
++      best = wfd_client_pick_resolution (all, width, height);
++    }
++
++  return best;
++}
++
++/* Whether mode @a shows the source better than mode @b: more of it, or the
++ * same at a higher refresh rate. */
++static gboolean
++wfd_client_mode_better (WfdResolution *a, WfdResolution *b, gint width, gint height)
++{
++  if (!a)
++    return FALSE;
++  if (!b)
++    return TRUE;
++
++  if (width > 0 && height > 0)
++    {
++      gdouble shown_a = displayed_scale (a, width, height);
++      gdouble shown_b = displayed_scale (b, width, height);
++
++      if (ABS (shown_a - shown_b) > 0.01)
++        return shown_a > shown_b;
++    }
++
++  return compare_resolutions (a, b) > 0;
++}
++
++/**
++ * wfd_client_choose_codec:
++ * @codecs: (element-type WfdVideoCodec): the codec entries a receiver offers
++ * @high_possible: whether the encoder can produce the constrained high profile
++ * @width: width of what is being captured, or 0 if unknown
++ * @height: height of what is being captured, or 0 if unknown
++ * @mode: (out) (transfer none): the mode to use from the chosen entry
++ *
++ * A receiver lists what it decodes per H.264 profile, and a television can
++ * take 1080p at 60 Hz in the constrained high profile while its constrained
++ * baseline entry stops at 30 Hz. The baseline entry is used unless another
++ * entry the encoder can produce shows the source better. Between entries
++ * showing it equally well, the baseline one is kept, then the higher level.
++ *
++ * Returns: (transfer none) (nullable): the chosen entry
++ */
++WfdVideoCodec *
++wfd_client_choose_codec (GPtrArray      *codecs,
++                         gboolean        high_possible,
++                         gint            width,
++                         gint            height,
++                         WfdResolution **mode)
++{
++  WfdVideoCodec *codec = NULL;
++  WfdResolution *codec_mode = NULL;
++
++  /* Entries the encoder cannot produce are a last resort. */
++  for (gint pass = 0; pass < 2 && !codec; pass++)
++    {
++      for (guint i = 0; i < codecs->len; i++)
++        {
++          WfdVideoCodec *item = g_ptr_array_index (codecs, i);
++          gboolean item_base = (item->profile & WFD_H264_PROFILE_BASE) != 0;
++          WfdResolution *item_mode;
++
++          if (pass == 0 && !item_base && !high_possible)
++            continue;
++
++          item_mode = wfd_client_best_mode (item, width, height);
++
++          if (!codec || wfd_client_mode_better (item_mode, codec_mode, width, height))
++            {
++              codec = item;
++              codec_mode = item_mode;
++            }
++          else if (!wfd_client_mode_better (codec_mode, item_mode, width, height))
++            {
++              gboolean codec_base = (codec->profile & WFD_H264_PROFILE_BASE) != 0;
++
++              if ((item_base && !codec_base) ||
++                  (item_base == codec_base && item->level > codec->level))
++                {
++                  codec = item;
++                  codec_mode = item_mode;
++                }
++            }
++        }
++    }
++
++  if (mode)
++    *mode = codec_mode;
++
++  return codec;
++}
++
++/* Whether the encoder that will be used can produce the constrained high
++ * profile. x264 is used whenever it is installed (patch 0001), and the VA
++ * encoders can too; only OpenH264 is limited to baseline. */
++static gboolean
++wfd_client_high_profile_possible (void)
++{
++  const gchar *encoders[] = { "x264enc", "vah264enc", "vaapih264enc" };
++
++  for (guint i = 0; i < G_N_ELEMENTS (encoders); i++)
++    {
++      g_autoptr(GstElementFactory) factory = gst_element_factory_find (encoders[i]);
++
++      if (factory)
++        return TRUE;
++    }
++
++  return FALSE;
++}
++
+ void
+ wfd_client_select_codec_and_resolution (WfdClient *self, WfdH264ProfileFlags profile)
+ {
+   gint i;
+   WfdVideoCodec *codec = NULL;
++  WfdResolution *best = NULL;
+ 
++  /* Say what the receiver offers, per profile, so that a choice can be
++   * checked against it. */
+   for (i = 0; i < self->params->video_codecs->len; i++)
+     {
+       WfdVideoCodec *item = g_ptr_array_index (self->params->video_codecs, i);
++      g_autoptr(GList) resolutions = wfd_video_codec_get_resolutions (item);
++      g_autoptr(GString) offered = g_string_new (NULL);
+ 
+-      /* Use the first codec we can find. */
+-      if (!codec)
+-        codec = item;
++      for (GList *entry = resolutions; entry; entry = entry->next)
++        {
++          WfdResolution *candidate = (WfdResolution *) entry->data;
+ 
+-      if (codec->profile != item->profile && item->profile == profile)
+-        codec = item;
++          g_string_append_printf (offered, "%s%ix%i@%i%s",
++                                  offered->len ? ", " : "",
++                                  candidate->width, candidate->height,
++                                  candidate->refresh_rate,
++                                  candidate->interlaced ? "i" : "");
++        }
+ 
+-      if (codec->profile == item->profile && item->level > codec->level)
+-        codec = item;
++      g_message ("WfdClient: Receiver offers %s level %s: %s",
++                 wfd_profile_name (item->profile), wfd_level_name (item->level),
++                 offered->len ? offered->str : "nothing");
+     }
+ 
++  codec = wfd_client_choose_codec (self->params->video_codecs,
++                                   wfd_client_high_profile_possible (),
++                                   source_width, source_height, &best);
++
+   if (codec)
+     self->params->selected_codec = wfd_video_codec_ref (codec);
+   else
+     g_warning ("No codec/resolution could be found, falling back to defaults!");
+ 
+-  if (codec)
++  if (codec && best)
+     {
+-      g_autoptr(GList) resolutions = NULL;
+-      WfdResolution *best = NULL;
+-
+-      resolutions = wfd_video_codec_get_resolutions (codec);
+-
+-      {
+-        g_autoptr(GString) offered = g_string_new (NULL);
+-
+-        for (GList *item = resolutions; item; item = item->next)
+-          {
+-            WfdResolution *candidate = (WfdResolution *) item->data;
+-
+-            g_string_append_printf (offered, "%s%ix%i@%i%s",
+-                                    offered->len ? ", " : "",
+-                                    candidate->width, candidate->height,
+-                                    candidate->refresh_rate,
+-                                    candidate->interlaced ? "i" : "");
+-          }
+-
+-        g_message ("WfdClient: Receiver offers %s",
+-                   offered->len ? offered->str : "nothing");
+-      }
+-
+-      {
+-        /* Prefer the receiver's CEA modes.
+-         *
+-         * A receiver advertises three tables: CEA holds the timings consumer
+-         * televisions are built to display, VESA the computer monitor ones,
+-         * HH the handheld ones. Taking the largest mode across all three sent
+-         * a television 1920x1200, a monitor shape it accepted but had to
+-         * resynchronise for, which showed as the picture flashing. A receiver
+-         * that offers CEA modes is saying which timings it is made for.
+-         */
+-        g_autoptr(GList) preferred = wfd_video_codec_get_resolutions_cea (codec);
+-
+-        best = wfd_client_pick_resolution (preferred, source_width, source_height);
+-        if (!best)
+-          best = wfd_client_pick_resolution (resolutions, source_width, source_height);
+-      }
+-
+-      if (best)
+-        {
+-          self->params->selected_resolution = wfd_resolution_copy (best);
+-          g_message ("WfdClient: Using %ix%i@%i of the modes the receiver offers.",
+-                     best->width, best->height, best->refresh_rate);
+-        }
++      self->params->selected_resolution = wfd_resolution_copy (best);
++      g_message ("WfdClient: Using %ix%i@%i in the %s profile.",
++                 best->width, best->height, best->refresh_rate,
++                 wfd_profile_name (codec->profile));
+     }
+ 
+   if (!self->params->selected_resolution)
+diff -ruN a/src/wfd/wfd-client.h b/src/wfd/wfd-client.h
+--- a/src/wfd/wfd-client.h
++++ b/src/wfd/wfd-client.h
+@@ -21,6 +21,14 @@
+                                           gint   width,
+                                           gint   height);
+ 
++#include "wfd-video-codec.h"
++
++WfdVideoCodec *wfd_client_choose_codec (GPtrArray      *codecs,
++                                        gboolean        high_possible,
++                                        gint            width,
++                                        gint            height,
++                                        WfdResolution **mode);
++
+ WfdClient * wfd_client_new (void);
+ void wfd_client_query_support (WfdClient *self);
+ void wfd_client_trigger_method (WfdClient   *self,
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -620,6 +620,14 @@
+    * Wi-Fi link carries. */
+   bitrate_kbit = MIN (bitrate_kbit, 10 * 1024);
+ 
++  /* At a higher refresh rate the same bitrate is spread over more frames,
++   * each of which would get fewer bits. The limit grows with the rate, so a
++   * 60 Hz frame gets as many as a 30 Hz one, still within the receiver's
++   * announced maximum. */
++  if (resolution->refresh_rate > 30)
++    bitrate_kbit = MIN (wfd_video_codec_get_max_bitrate_kbit (codec),
++                        bitrate_kbit * resolution->refresh_rate / 30);
++
+   if (resolution->interlaced)
+     g_warning ("Resolution should never be set to interlaced as that is not supported with all codecs.");
+ 
+@@ -707,9 +715,11 @@
+                      * picture gets one. */
+                     "threads", (guint) CLAMP (codec->max_slice_num, 1, 4),
+                     "vbv-buf-capacity", 50,
+-                    "dct8x8", FALSE,
++                    /* The tools that make the high profile compress better
++                     * than baseline at the same bitrate. */
++                    "dct8x8", profile == WFD_H264_PROFILE_HIGH,
+                     "ref", 1,
+-                    "cabac", FALSE,
++                    "cabac", profile == WFD_H264_PROFILE_HIGH,
+                     "sync-lookahead", 0,
+                     "b-adapt", FALSE,
+                     "bframes", (guint) 0,
