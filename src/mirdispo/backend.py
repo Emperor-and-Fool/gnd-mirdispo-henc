@@ -133,6 +133,12 @@ class DisplayBackend(QObject):
         return legal.source_location()
 
     def _set_status(self, status: str, text: str):
+        if status == "streaming":
+            # The retry budget is for getting a picture back, not for the
+            # whole session. Kept across a recovered drop, it let the retries
+            # needed to connect, or two brief drops in a long session, end
+            # the cast at the next one.
+            self._reconnects = 0
         self._status, self._status_text = status, text
         self.statusChanged.emit()
 
@@ -215,9 +221,9 @@ class DisplayBackend(QObject):
 
                     # The helper can still be running while the handshake is
                     # already lost: NetworkManager waits out a 45 second
-                    # timeout after wpa_supplicant has given its verdict,
-                    # which measured 28 seconds of waiting for an answer that
-                    # already existed.
+                    # timeout after wpa_supplicant has given its verdict, close
+                    # to half a minute of waiting for an answer that already
+                    # exists.
                     if (self._status == "connecting" and self._attempt_started
                             and self._handshake_failed(self._attempt_started)):
                         self._attempt_started = 0.0
@@ -250,17 +256,18 @@ class DisplayBackend(QObject):
         self._set_error(message)
         self._set_status("error", "Discovery could not start")
 
-    # A Wi-Fi Direct link can drop from a moment of beacon loss, which ended a
-    # measured 11-minute session. A short glitch should cost an interruption,
-    # not the whole session, so the stream is restarted a couple of times
-    # before the user is told it is over.
+    # A Wi-Fi Direct link can drop from a moment of beacon loss, which is
+    # common when the adapter also serves a network on another channel. A
+    # short glitch should cost an interruption, not the whole session, so each
+    # drop gets a couple of attempts to bring the picture back before the user
+    # is told it is over.
     MAX_RECONNECTS = 2
 
     # A receiver that never answers the handshake is a different problem, and
     # a more stubborn one: NetworkManager spends 45 seconds on each attempt,
-    # and every successful connection measured today came after one or two
-    # that timed out. Retrying is therefore worth doing several times, since
-    # the user would otherwise be clicking the button themselves.
+    # and receivers often accept only after one or two attempts have timed
+    # out. Retrying is therefore worth doing several times, since the user
+    # would otherwise be clicking the button themselves.
     MAX_CONNECT_ATTEMPTS = 4
 
     # When an attempt expires without an answer, the receiver sends its own
@@ -269,9 +276,9 @@ class DisplayBackend(QObject):
     # insist on being group owner fails, so that case stands off.
     #
     # A handshake that got as far as group formation and failed there is a
-    # different case: in every such failure logged so far the receiver sent
-    # no request afterwards, so there is nothing to wait for and waiting only
-    # adds to the time before a picture appears.
+    # different case: the receiver sends no request afterwards, so there is
+    # nothing to wait for and waiting only adds to the time before a picture
+    # appears.
     RETRY_DELAY_MS = 9000
     FAST_RETRY_DELAY_MS = 2000
     RECONNECT_DELAY_MS = 2000

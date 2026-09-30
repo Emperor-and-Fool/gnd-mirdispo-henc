@@ -153,9 +153,8 @@ class GroupFormationProbe:
     interface for the rest of the handshake, and when group formation fails it
     removes that interface in the same moment it reports
     P2P-GROUP-FORMATION-FAILURE. NetworkManager then still waits out its
-    45 second timeout. In every failure logged so far that verdict came 16
-    seconds after the negotiation, which left close to half a minute of
-    waiting for nothing.
+    45 second timeout. The verdict typically comes about 16 seconds after the
+    negotiation, which leaves close to half a minute of waiting for nothing.
 
     A group interface that comes up during an attempt and is gone or down
     again while the attempt is still connecting is that verdict. Network interfaces can be

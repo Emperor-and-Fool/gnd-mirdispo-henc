@@ -56,10 +56,10 @@ PROTOCOL_NAMES = {
 # Which way to reach a receiver that offers more than one.
 #
 # Casting over the network needs no Wi-Fi Direct group, so there is no channel
-# for the receiver to choose badly and no handshake to time out: a measured
-# connection over the network was up in one second, against six to thirty for
-# Wi-Fi Direct on the same receiver. Wi-Fi Direct remains the fallback for
-# receivers that are not on the network.
+# for the receiver to choose badly and no handshake to time out. A session over
+# the network starts in about a second, while Wi-Fi Direct commonly takes from
+# several seconds to half a minute on the same receiver. Wi-Fi Direct remains
+# the fallback for receivers that are not on the network.
 PROTOCOL_PREFERENCE = {
     4: 0,   # over the network
     3: 1,   # Wi-Fi Direct

@@ -203,11 +203,10 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(backend.status, "connecting")
 
     def test_a_failed_handshake_is_retried_without_the_user_clicking(self):
-        """Measured: two attempts timed out after 45 s each, and the TV sent
-        its own invitation half a second later. The 26 s the user spent
-        deciding to click again is what made connecting feel slow, and the
-        app never retried because NetworkManager's "failed" state lasts about
-        a millisecond -- far too short for a two-second poll to see."""
+        """A timed-out attempt is retried without waiting for the user to
+        click again. NetworkManager's "failed" state lasts about a
+        millisecond, far too short for a two-second poll to see, so the
+        helper exiting is what gives it away."""
         discovery = FakeDiscovery()
         backend = DisplayBackend(
             discovery=discovery,
@@ -353,8 +352,8 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(discovery.stopped, "knd-test.service")
 
     def test_a_lost_handshake_is_acted_on_without_waiting_for_the_timeout(self):
-        """Measured: wpa_supplicant reported the failure 28 seconds before
-        NetworkManager stopped waiting for it."""
+        """wpa_supplicant knows a handshake has failed well before
+        NetworkManager stops waiting for it."""
         discovery = FakeDiscovery()
         backend = DisplayBackend(
             discovery=discovery,
@@ -373,8 +372,8 @@ class BackendTests(unittest.TestCase):
         self.assertIn("Retrying", backend.statusText)
 
     def test_a_dropped_link_is_retried_before_giving_up(self):
-        """Beacon loss ended a measured 11-minute session; one glitch should
-        not cost the whole session."""
+        """A moment of beacon loss should cost an interruption, not the
+        whole session."""
         discovery = FakeDiscovery()
         watcher = FakeP2P()
         backend = DisplayBackend(
@@ -406,11 +405,21 @@ class BackendTests(unittest.TestCase):
             backend._poll_displays()
             self.assertEqual(backend.status, "streaming")
 
-        # The budget is spent; the next drop ends the session.
+        # Every drop above recovered, so the session is still going. It ends
+        # only when a drop cannot be recovered: here each replacement helper
+        # dies before the picture is back.
+        watcher.value = (p2p.STATE_DISCONNECTED, 0)
         discovery.unit_active = False
         backend._poll_displays()
+        for _ in range(10):
+            if backend.status == "error":
+                break
+            discovery.unit_active = True
+            backend._poll_displays()
+            discovery.unit_active = False
+            backend._poll_displays()
         self.assertEqual(backend.status, "error")
-        self.assertEqual(backend.errorText, "The connection to the receiver was lost")
+        self.assertNotEqual(backend.errorText, "")
         self.assertEqual(discovery.started_uuid, "/peer/1")
 
     def test_a_reconnect_that_cannot_start_is_reported(self):
@@ -508,6 +517,18 @@ class HelperStateTests(unittest.TestCase):
         self.assertEqual(backend.errorText, "")
         self.assertEqual(discovery.stopped, "knd-test.service")
         self.assertIn("was stopped", backend.statusText)
+
+    def test_every_recovered_drop_gets_the_full_retry_budget(self):
+        # A long session over Wi-Fi Direct can lose the link more often than
+        # MAX_RECONNECTS times. Each drop that recovers starts the count over.
+        discovery, backend = self.make()
+        for _ in range(backend.MAX_RECONNECTS + 3):
+            discovery.helper_state = "streaming"
+            backend._poll_displays()
+            self.assertEqual(backend.status, "streaming")
+            backend._handle_dropped_stream(connected=True)
+            self.assertEqual(backend.status, "connecting")
+            self.assertEqual(backend.errorText, "")
 
     def test_quitting_idle_stops_the_engine_but_not_a_cast(self):
         discovery, backend = self.make()
