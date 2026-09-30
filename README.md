@@ -36,7 +36,7 @@ It is maintained by Benjamin Berg and Christian Glombek, with Anupam Kumar,
 Pedro Sader Azevedo and many other contributors. They have spent years on a
 protocol that is unforgiving in practice. This project redistributes that
 engine without its GTK interface. It adds a Plasma front end, packaging, and
-fourteen patches.
+fifteen patches.
 
 Those patches are in `packaging/patches/`, and each one is a fault found by
 using the engine rather than a rewrite of it: encoder selection, stream unit
@@ -46,8 +46,8 @@ display mode from what both ends support. Four more let the engine run
 without GTK, inside a Flatpak sandbox with the screen sharing permission kept
 for the session, and under a D-Bus name of its own. The last two have each
 stream report on D-Bus whether the receiver is getting a picture, and whether
-the user ended it from the desktop. One more lets the engine run from wherever
-it is installed. They are written to be readable upstream, and belong there
+the user ended it from the desktop. Two more let the engine run from wherever
+it is installed and send the desktop's sound to the receiver. They are written to be readable upstream, and belong there
 more than here.
 
 Both projects are under the GNU General Public License, version 3 or later.
@@ -61,7 +61,8 @@ receiving this gets the same freedoms: the full licence is in `LICENSE`, and
 - A system tray icon: closing the window keeps a cast going, and the tray
   shows what is being shared and stops it
 - Miracast P2P, Miracast over Infrastructure, and Chromecast discovery
-- Portal/PipeWire capture and GStreamer video/audio streaming
+- The screen and the desktop's sound on the receiver: sound switches to the
+  receiver when a cast starts and back when it ends
 - Diagnostics that answer why casting would not work: NetworkManager, the
   casting backend, the ScreenCast portal, GStreamer elements and whether
   receivers on the network can be discovered at all

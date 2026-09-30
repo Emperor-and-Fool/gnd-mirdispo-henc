@@ -18,15 +18,15 @@ Copyright: 2018 Benjamin Berg <bberg@redhat.com>
  GNOME Network Displays contributors
 License: GPL-3+
 Comment: Modified in September 2026 and built from GNOME Network Displays
- 0.99.0. The modifications are the fourteen patches installed alongside this file,
+ 0.99.0. The modifications are the fifteen patches installed alongside this file,
  covering encoder selection, stream unit naming, shutdown, PulseAudio teardown,
  a use-after-free in receiver discovery, reuse of the screen sharing
  permission, choosing the streamed display mode from both ends of the link,
  building without GTK, running streams inside a Flatpak sandbox, a
  configurable D-Bus name prefix, keeping the screen sharing permission
  inside a Flatpak sandbox, publishing each stream's state on D-Bus,
- reporting a stream the user ended from the desktop, and finding the stream
- helper beside the daemon. The complete upstream source archive is installed at
+ reporting a stream the user ended from the desktop, finding the stream
+ helper beside the daemon, and sending the desktop's sound to the receiver. The complete upstream source archive is installed at
  /usr/share/doc/mirdispo/gnome-network-displays-0.99.0.tar.xz;
  applying the patches to it in numerical order reproduces the source these
  binaries were built from.

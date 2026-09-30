@@ -1,0 +1,138 @@
+From: Mirdispo contributors
+Subject: Send the desktop's sound to the receiver
+
+The stream helper creates a null sink named after the receiver and sends its
+monitor to the receiver as the audio track. Nothing played into it: the
+desktop kept its default output, so the receiver got silence unless the user
+knew to pick the new device in the sound settings.
+
+The helper now makes its sink the default output once it exists, which also
+moves the streams that follow the default, and remembers the output that was
+the default before. When the stream ends it gives the default back to that
+output before unloading the sink. A default that was itself one of these
+sinks, left from an earlier stream, is not remembered.
+
+diff -ruN a/src/nd-pulseaudio.c b/src/nd-pulseaudio.c
+--- a/src/nd-pulseaudio.c
++++ b/src/nd-pulseaudio.c
+@@ -20,6 +20,10 @@
+   gchar                *uuid;
+ 
+   pa_operation         *operation;
++
++  /* The output that was the default before the cast took it over, so it can
++   * be given back when the cast ends. */
++  gchar                *previous_default_sink;
+ };
+ 
+ static void      nd_pulseaudio_async_initable_iface_init (GAsyncInitableIface *iface);
+@@ -131,6 +135,45 @@
+   g_idle_add (return_idle_cb, g_object_ref (task));
+ }
+ 
++/* The null sink only receives what is played into it, and its monitor is what
++ * the stream sends to the receiver. Left alone, the desktop keeps playing
++ * through its own speakers and the receiver gets silence, unless the user
++ * knows to pick the new output in the sound settings. The sink is therefore
++ * made the default output for the length of the cast, which also moves the
++ * streams that follow the default, and the previous default is restored when
++ * the cast ends. */
++static void
++on_pa_server_info_for_default (pa_context           *c,
++                               const pa_server_info *info,
++                               void                 *userdata)
++{
++  NdPulseaudio *self = ND_PULSEAUDIO (userdata);
++  g_autofree gchar *sink_name = g_strdup_printf (ND_PA_SINK "_%.8s", self->uuid);
++  pa_operation *operation;
++
++  if (info && info->default_sink_name &&
++      !g_str_has_prefix (info->default_sink_name, ND_PA_SINK) &&
++      !self->previous_default_sink)
++    self->previous_default_sink = g_strdup (info->default_sink_name);
++
++  g_debug ("NdPulseaudio: Making %s the default output (was %s)", sink_name,
++           self->previous_default_sink ? self->previous_default_sink : "unknown");
++  operation = pa_context_set_default_sink (c, sink_name, NULL, NULL);
++  if (operation)
++    pa_operation_unref (operation);
++}
++
++static void
++nd_pulseaudio_route_to_sink (NdPulseaudio *self)
++{
++  pa_operation *operation = pa_context_get_server_info (self->context,
++                                                        on_pa_server_info_for_default,
++                                                        self);
++
++  if (operation)
++    pa_operation_unref (operation);
++}
++
+ static void
+ on_pa_null_module_loaded (pa_context *c,
+                           uint32_t    idx,
+@@ -156,6 +199,7 @@
+ 
+   g_debug ("NdPulseaudio: Module loaded, we are ready to grab audio! ");
+   self->null_module_idx = idx;
++  nd_pulseaudio_route_to_sink (self);
+   return_idle_success (self->init_task);
+   g_clear_object (&self->init_task);
+ }
+@@ -202,6 +246,7 @@
+       g_debug ("NdPulseaudio: Error querying sink info");
+       g_debug ("NdPulseaudio: Got a sink info for the expected name");
+       self->null_module_idx = i->owner_module;
++      nd_pulseaudio_route_to_sink (self);
+       return_idle_success (self->init_task);
+       g_clear_object (&self->init_task);
+       return;
+@@ -242,6 +287,18 @@
+     pa_threaded_mainloop_signal (self->mainloop, 0);
+ }
+ 
++static void
++nd_pulseaudio_default_restored_cb (pa_context *c, int success, void *userdata)
++{
++  NdPulseaudio *self = ND_PULSEAUDIO (userdata);
++
++  if (!success)
++    g_warning ("NdPulseaudio: Could not give the default output back");
++
++  if (self->mainloop)
++    pa_threaded_mainloop_signal (self->mainloop, 0);
++}
++
+ void
+ nd_pulseaudio_unload (NdPulseaudio *self)
+ {
+@@ -263,6 +320,20 @@
+       return;
+     }
+ 
++  if (self->previous_default_sink)
++    {
++      g_debug ("NdPulseaudio: Giving the default output back to %s", self->previous_default_sink);
++      operation = pa_context_set_default_sink (self->context, self->previous_default_sink,
++                                               nd_pulseaudio_default_restored_cb, self);
++      if (operation)
++        {
++          while (pa_operation_get_state (operation) == PA_OPERATION_RUNNING)
++            pa_threaded_mainloop_wait (self->mainloop);
++          pa_operation_unref (operation);
++        }
++      g_clear_pointer (&self->previous_default_sink, g_free);
++    }
++
+   operation = pa_context_unload_module (self->context,
+                                         self->null_module_idx,
+                                         nd_pulseaudio_unload_module_cb,
+@@ -463,6 +534,7 @@
+   g_clear_pointer (&self->mainloop, pa_threaded_mainloop_free);
+   g_clear_pointer (&self->name, g_free);
+   g_clear_pointer (&self->uuid, g_free);
++  g_clear_pointer (&self->previous_default_sink, g_free);
+ 
+   G_OBJECT_CLASS (nd_pulseaudio_parent_class)->finalize (object);
+ }

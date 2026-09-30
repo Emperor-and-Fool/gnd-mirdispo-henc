@@ -83,6 +83,14 @@ a previous session, so Mirdispo retries before telling the user anything.
   remaining modes it takes the one that shows the shared screen largest,
   without preferring frame rate or sharpness on the viewer's behalf.
 
+## Sound
+
+The stream helper creates a virtual output named after the receiver and sends
+what plays into it to the receiver as AAC. For the length of the cast that
+output is made the default, so the desktop's sound goes to the receiver
+without the user choosing a device, and the previous default is restored when
+the cast ends (patch 0015).
+
 ## Screen sharing permission
 
 Every cast is a new helper process, so without help the portal would ask which

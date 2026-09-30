@@ -230,6 +230,7 @@ modules:
           - ../packaging/patches/0012-publish-the-stream-state-on-d-bus.patch
           - ../packaging/patches/0013-report-a-stream-the-user-ended.patch
           - ../packaging/patches/0014-find-the-stream-helper-beside-the-daemon.patch
+          - ../packaging/patches/0015-send-the-desktop-sound-to-the-receiver.patch
 
   - name: mirdispo
     buildsystem: simple

@@ -44,6 +44,11 @@
     <category>AudioVideo</category>
   </categories>
   <releases>
+    <release version="3.4.0" date="2026-10-01">
+      <description>
+        <p>The desktop's sound now plays on the receiver along with the picture. Sound switches to the receiver when a cast starts and back to the previous output when it ends, without choosing a device in the sound settings.</p>
+      </description>
+    </release>
     <release version="3.3.2" date="2026-09-30">
       <description>
         <p>A Wi-Fi Direct link that drops and comes back no longer uses up the retries for the rest of the session. Before, a long cast that lost its link twice, or one that needed a couple of attempts to connect, ended at the next drop instead of reconnecting.</p>

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 project_root="$(cd "$(dirname "$0")/.." && pwd)"
-version="3.3.2"
+version="3.4.0"
 architecture="amd64"
 package_name="mirdispo"
 output_dir="${project_root}/outputs"
