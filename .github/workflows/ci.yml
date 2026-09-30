@@ -72,4 +72,6 @@ jobs:
         with:
           bundle: mirdispo.flatpak
           manifest-path: flatpak/io.github.hencyber.Mirdispo.yml
-          cache-key: flatpak-builder-${{ github.sha }}
+          # Keyed on the manifest, so sources are downloaded again only when
+          # it changes and an outage at an upstream host does not fail CI.
+          cache-key: flatpak-builder-${{ hashFiles('flatpak/io.github.hencyber.Mirdispo.yml') }}

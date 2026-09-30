@@ -160,10 +160,9 @@ modules:
       - /share
       - /var
     sources:
-      - type: git
-        url: https://gitlab.freedesktop.org/NetworkManager/NetworkManager.git
-        tag: 1.52.2
-        commit: 57a409441bef013f636ac8e72836c19ecb27c1b9
+      - type: archive
+        url: https://gitlab.freedesktop.org/api/v4/projects/411/packages/generic/NetworkManager/1.52.2/NetworkManager-1.52.2.tar.xz
+        sha256: 3658640e788bbcb6a000c29a95f0dccc4dfebba41c6e5e9a90ad1e6daacb512c
 
   - name: libportal
     buildsystem: meson

@@ -25,6 +25,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Downloaded sources are kept between runs and fetched again only when
+      # the manifest changes, so an outage at an upstream host cannot stop a
+      # release.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            work/flatpak-state/downloads
+            work/flatpak-state/git
+          key: flatpak-sources-${{ hashFiles('flatpak/io.github.hencyber.Mirdispo.yml') }}
+          restore-keys: flatpak-sources-
+
       - name: Fetch the published repository
         env:
           GH_TOKEN: ${{ github.token }}
