@@ -241,6 +241,12 @@ modules:
           - ../packaging/patches/0023-respect-the-receivers-slice-limit.patch
           - ../packaging/patches/0024-use-the-high-profile-when-it-gives-a-better-mode.patch
           - ../packaging/patches/0025-fix-two-cea-modes.patch
+          - ../packaging/patches/0026-cap-the-x264-bitrate.patch
+          - ../packaging/patches/0027-send-frames-evenly.patch
+          - ../packaging/patches/0028-keep-the-pcr-on-video.patch
+          - ../packaging/patches/0029-let-the-client-pause-discovery.patch
+          - ../packaging/patches/0030-retry-a-failed-mdns-resolve.patch
+          - ../packaging/patches/0031-send-all-bits-of-the-chosen-mode.patch
 
   - name: mirdispo
     buildsystem: simple

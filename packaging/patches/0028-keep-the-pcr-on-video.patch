@@ -1,0 +1,39 @@
+From: Mirdispo contributors
+Subject: Keep the PCR on the video stream
+
+mpegtsmux puts the PCR on the first stream it creates, and it creates
+streams only for pads that already have caps. When the first AAC frame
+reaches it before the encoder's caps, the PCR is carried by the audio stream
+for the whole session. Audio comes in 40 ms bursts, so PCRs then arrive in
+bursts with gaps of over 100 ms, and in a replica of the pipeline 28 to 33%
+of the packets left late. It happened in 4 of about 36 runs.
+
+The muxer now gets a program map that places both streams in program 1, as
+before, and names the video pad as the PCR stream. The PAT and PMT are
+unchanged: program 1 at PMT PID 0x20 with the PCR on PID 0x1011.
+
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -523,6 +523,21 @@
+                 "alignment", (gint) 7, /* Force the correct alignment for UDP */
+                 NULL);
+ 
++  /* Both streams in program 1, as before, with the PCR on video. Without a
++   * map the muxer puts the PCR on whichever stream it creates first, and when
++   * sound reaches it before the encoder's caps it stays on the audio stream
++   * for the whole session: PCRs then come in bursts with gaps of over 100 ms,
++   * and the receiver's clock stumbles. */
++  {
++    g_autoptr(GstStructure) prog_map = gst_structure_new ("prog-map",
++                                                          "sink_4113", G_TYPE_INT, 1,
++                                                          "sink_4352", G_TYPE_INT, 1,
++                                                          "PCR_1", G_TYPE_STRING, "sink_4113",
++                                                          NULL);
++
++    g_object_set (mpegmux, "prog-map", prog_map, NULL);
++  }
++
+ 
+   queue_pre_payloader = gst_element_factory_make ("queue", "wfd-pre-payloader-queue");
+   success &= gst_bin_add (bin, queue_pre_payloader);

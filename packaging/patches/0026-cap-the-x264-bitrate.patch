@@ -1,0 +1,38 @@
+From: Mirdispo contributors
+Subject: Hold x264 under the bitrate limit
+
+x264 was configured with "pass" 4 and the comment "constant bit rate
+encoding". 4 is GST_X264_ENC_PASS_QUANT: a constant quantizer, which makes
+x264 ignore both the bitrate and the VBV buffer. The bitrate limit, which
+patch 0020 raised to 10 Mbit/s, never had any effect. Measured with the same
+settings at 1080p30, a scrolling picture came out at 25 Mbit/s and a noisy one
+at 390 Mbit/s, in frames of up to 1.8 MB. Over Wi-Fi Direct, where the radio
+shares its time with another channel, such bursts fill the socket's send
+buffer, and the backlog spreads back through the muxer to the sound queue:
+sound breaks up or stops, and frames are dropped.
+
+x264 now encodes at constant quality (pass 5, CRF at the default quantizer
+21) under the bitrate limit through the VBV. A picture that fits within the
+limit keeps the quality it had; one that does not is held to it. Measured:
+scrolling 10 Mbit/s with frames up to 0.44 Mbit, noise 8 Mbit/s with frames
+up to 0.49 Mbit, and the noisy picture encodes faster than before.
+
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -704,7 +704,14 @@
+ 
+       g_object_set (encoder,
+                     "qos", TRUE,
+-                    "pass", 4, /* constant bit rate encoding */
++                    /* Constant quality (x264's CRF, at the default quantizer)
++                     * held under the bitrate below by the VBV. This said
++                     * "constant bit rate", but 4 is GST_X264_ENC_PASS_QUANT,
++                     * a constant quantizer that ignores bitrate and VBV: a
++                     * scrolling page came out at 25 Mbit/s and a noisy
++                     * picture at 390 Mbit/s, in frames of up to 1.8 MB,
++                     * which no Wi-Fi link carries without backing up. */
++                    "pass", 5,
+                     "tune", 0x4, /* zero latency */
+                     "speed-preset", 1, /* ultrafast */
+                     "rc-lookahead", 1,

@@ -44,6 +44,14 @@
     <category>AudioVideo</category>
   </categories>
   <releases>
+    <release version="3.7.0" date="2026-10-01">
+      <description>
+        <p>Fixes sound dropping out and the picture stuttering, especially over Wi-Fi Direct. The encoder now keeps to its bitrate limit, which it never did: busy pictures came out in bursts no wireless link carries, and the backlog reached the sound.</p>
+        <p>Frames reach the receiver evenly again; the shorter delay in 3.6.0 made them arrive unevenly.</p>
+        <p>While a picture is being sent, Mirdispo pauses the search for receivers, which made the Wi-Fi radio scan other channels every 20 seconds.</p>
+        <p>A receiver whose network address could not be looked up at first, for instance just after it woke up, is found again instead of only over Wi-Fi Direct.</p>
+      </description>
+    </release>
     <release version="3.6.0" date="2026-10-01">
       <description>
         <p>Receivers that can show full HD at 60 frames per second in the H.264 high profile now get it, twice as smooth as before at the same resolution. Mirdispo used to limit every receiver to the baseline profile.</p>

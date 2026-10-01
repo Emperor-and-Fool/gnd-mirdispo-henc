@@ -1,0 +1,138 @@
+From: Mirdispo contributors
+Subject: Try a failed mDNS resolve again
+
+When resolving a receiver announced over mDNS failed, the provider logged a
+warning and gave up. The browser does not announce a service again while it
+stays present, so the receiver remained missing from the network route until
+the daemon restarted, and was reached over Wi-Fi Direct instead. A receiver
+that has just woken up, or a network that is still coming up, can fail a
+resolve this way.
+
+A failed resolve is now tried again every 5 s, up to five attempts.
+
+diff -ruN a/src/nd-wfd-mice-provider.c b/src/nd-wfd-mice-provider.c
+--- a/src/nd-wfd-mice-provider.c
++++ b/src/nd-wfd-mice-provider.c
+@@ -217,12 +217,82 @@
+   g_signal_emit_by_name (provider, "sink-added", sink);
+ }
+ 
++/* A receiver that has just woken up, or whose network is still coming up,
++ * can fail to answer a resolve. The browser does not announce the service
++ * again, so without another attempt the receiver stays missing until the
++ * daemon restarts, and is reached over Wi-Fi Direct instead, if at all. */
++#define RESOLVE_ATTEMPTS 5
++#define RESOLVE_RETRY_SECONDS 5
++
++typedef struct
++{
++  NdWFDMiceProvider *provider;
++  AvahiIfIndex       iface;
++  GaProtocol         proto;
++  gchar             *name;
++  gchar             *type;
++  gchar             *domain;
++  guint              attempt;
++} ResolveRequest;
++
++static void
++resolve_request_free (ResolveRequest *request)
++{
++  g_object_unref (request->provider);
++  g_free (request->name);
++  g_free (request->type);
++  g_free (request->domain);
++  g_free (request);
++}
++
++static void resolve_service (NdWFDMiceProvider *provider,
++                             AvahiIfIndex       iface,
++                             GaProtocol         proto,
++                             const gchar       *name,
++                             const gchar       *type,
++                             const gchar       *domain,
++                             guint              attempt);
++
++static gboolean
++resolve_retry_cb (gpointer user_data)
++{
++  ResolveRequest *request = user_data;
++
++  resolve_service (request->provider, request->iface, request->proto,
++                   request->name, request->type, request->domain, request->attempt);
++
++  return G_SOURCE_REMOVE;
++}
++
+ static void
+ resolver_failure_cb (GaServiceResolver *resolver,
+                      GError            *error,
+                      NdWFDMiceProvider *provider)
+ {
+-  g_warning ("NdWFDMiceProvider: Failed to resolve Avahi service: %s", error->message);
++  ResolveRequest *failed = g_object_get_data (G_OBJECT (resolver), "nd-resolve-request");
++
++  if (failed && failed->attempt + 1 < RESOLVE_ATTEMPTS)
++    {
++      ResolveRequest *retry = g_new0 (ResolveRequest, 1);
++
++      g_warning ("NdWFDMiceProvider: Failed to resolve Avahi service \"%s\": %s; trying again in %d s",
++                 failed->name, error->message, RESOLVE_RETRY_SECONDS);
++      retry->provider = g_object_ref (provider);
++      retry->iface = failed->iface;
++      retry->proto = failed->proto;
++      retry->name = g_strdup (failed->name);
++      retry->type = g_strdup (failed->type);
++      retry->domain = g_strdup (failed->domain);
++      retry->attempt = failed->attempt + 1;
++      g_timeout_add_seconds_full (G_PRIORITY_DEFAULT, RESOLVE_RETRY_SECONDS,
++                                  resolve_retry_cb, retry,
++                                  (GDestroyNotify) resolve_request_free);
++    }
++  else
++    {
++      g_warning ("NdWFDMiceProvider: Failed to resolve Avahi service: %s", error->message);
++    }
++
+   g_object_unref (resolver);
+ }
+ 
+@@ -236,7 +306,20 @@
+                   GaLookupResultFlags flags,
+                   NdWFDMiceProvider  *provider)
+ {
++  resolve_service (provider, iface, proto, name, type, domain, 0);
++}
++
++static void
++resolve_service (NdWFDMiceProvider *provider,
++                 AvahiIfIndex       iface,
++                 GaProtocol         proto,
++                 const gchar       *name,
++                 const gchar       *type,
++                 const gchar       *domain,
++                 guint              attempt)
++{
+   GaServiceResolver *resolver;
++  ResolveRequest *request;
+   GError *error = NULL;
+ 
+   resolver = ga_service_resolver_new (iface,
+@@ -247,6 +330,17 @@
+                                       GA_PROTOCOL_INET,
+                                       GA_LOOKUP_NO_FLAGS);
+ 
++  request = g_new0 (ResolveRequest, 1);
++  request->provider = g_object_ref (provider);
++  request->iface = iface;
++  request->proto = proto;
++  request->name = g_strdup (name);
++  request->type = g_strdup (type);
++  request->domain = g_strdup (domain);
++  request->attempt = attempt;
++  g_object_set_data_full (G_OBJECT (resolver), "nd-resolve-request", request,
++                          (GDestroyNotify) resolve_request_free);
++
+   g_signal_connect (resolver,
+                     "found",
+                     (GCallback) resolver_found_cb,

@@ -74,6 +74,13 @@ class FakeDiscovery:
     def release(self):
         self.released = True
 
+    discover_calls = None
+
+    def set_discover(self, discover):
+        if self.discover_calls is None:
+            self.discover_calls = []
+        self.discover_calls.append(discover)
+
 
 class FakeP2P:
     def __init__(self, value=(p2p.STATE_DISCONNECTED, 0)):
@@ -529,6 +536,17 @@ class HelperStateTests(unittest.TestCase):
             backend._handle_dropped_stream(connected=True)
             self.assertEqual(backend.status, "connecting")
             self.assertEqual(backend.errorText, "")
+
+    def test_the_search_pauses_while_streaming_and_resumes_after(self):
+        discovery, backend = self.make()
+        discovery.helper_state = "streaming"
+        backend._poll_displays()
+        self.assertEqual(discovery.discover_calls, [False])
+        backend._handle_dropped_stream(connected=True)
+        self.assertEqual(discovery.discover_calls, [False, True])
+        backend._poll_displays()
+        backend.disconnect()
+        self.assertEqual(discovery.discover_calls, [False, True, False, True])
 
     def test_quitting_idle_stops_the_engine_but_not_a_cast(self):
         discovery, backend = self.make()

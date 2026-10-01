@@ -114,17 +114,29 @@ Mirdispo does not choose on the user's behalf. Within that limit:
   catch up, which is seen as the picture jumping. With x264 that happens only
   from 100 ms after capture, since packets are sent 150 ms after capture
   anyway (patch 0019). Dropped frames are reported in the journal.
-- The bitrate is capped at 10 Mbit/s rather than 4 (patch 0020), so a moving
-  1080p picture does not smear. The cap grows with the refresh rate, so a
-  60 Hz frame gets as many bits as a 30 Hz one (patch 0024).
+- x264 encodes at constant quality held under a bitrate limit (patch 0026).
+  Upstream's setting was a constant quantizer that ignored the bitrate
+  entirely, and a busy picture came out at hundreds of Mbit/s in bursts no
+  Wi-Fi link carries; the backlog then reached the sound. The limit is
+  10 Mbit/s (patch 0020) and grows with the refresh rate, so a 60 Hz frame
+  gets as many bits as a 30 Hz one (patch 0024).
+- While a picture is being sent the app pauses the search for receivers
+  (patch 0029). A Wi-Fi Direct search scans other channels on the radio that
+  carries the stream every 20 seconds. It resumes as soon as a link drops.
 
 ## Delay
 
 Every packet leaves a fixed pipeline latency after it was captured, so that
 latency is how far the receiver trails the desktop. It is 500 ms for OpenH264,
-whose latency spikes after scene changes, and 80 ms for x264, which is
-configured for zero latency (patches 0017 and 0021). Measured with sound, a
-frame then leaves about 35 ms after capture.
+whose latency spikes after scene changes, and 120 ms for x264, which is
+configured for zero latency (patches 0017 and 0027). Lower is worse, not
+better: the muxer holds the last packets of each frame until its next input,
+and below about 100 ms those tails leave whenever it lets them go, so frames
+reach the receiver unevenly. `tests/video_pipeline.c` measures when each
+frame's last packet leaves and fails if frames are not evenly spaced.
+
+The PCR is carried by the video stream (patch 0028); left to the muxer it can
+end up on the audio stream, whose packets come in bursts.
 
 The receiver adds its own delay on top. GStreamer's MPEG-TS muxer stamps
 every frame to be shown 125 ms after the clock reference it sends, a fixed

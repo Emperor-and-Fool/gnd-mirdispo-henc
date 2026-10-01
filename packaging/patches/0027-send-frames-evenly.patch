@@ -1,0 +1,39 @@
+From: Mirdispo contributors
+Subject: Raise the x264 pipeline latency to 120 ms so frames leave evenly
+
+Patch 0021 lowered the x264 pipeline latency to 80 ms after measuring when
+the first packet of each frame left. The last packets do not leave with it:
+with alignment 7 the muxer keeps the tail of each frame until its next input
+arrives, a burst of sound every 40 ms or the next frame. At 80 ms those tails
+miss their time at the sink, so they go out whenever the muxer releases them
+and frames arrive unevenly, which a receiver shows as stutter. Measured from
+the last packet of each frame with real sound capture, the time between
+frames ranged from 7 to 94 ms at 80 ms, with the same spread on the engine
+before 0021, and was 33.3 ms with under a millisecond of spread at 100, 120
+and 150 ms.
+
+The latency is now 120 ms, which keeps frames even with room to spare and
+still sends them sooner than the 150 ms of patch 0017.
+
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -584,11 +584,14 @@
+    * Every packet is sent that much after it was captured, so the latency is
+    * felt as the receiver lagging behind the desktop. x264 is configured for
+    * zero latency with no lookahead and no B-frames, and does not have those
+-   * spikes, so it gets a much shorter one: measured with sound included,
+-   * 80 ms sends a frame about 35 ms after capture, where 150 ms took over
+-   * 100 ms, and the frames leave no less evenly. */
++   * spikes, so it gets a shorter one. Not too short: the muxer holds the
++   * last packets of each frame until its next input arrives, and below about
++   * 100 ms those tails miss their time at the sink and leave whenever the
++   * muxer lets them go. Measured from the last packet of each frame, the
++   * time between frames was 33.3 ms with a spread of under a millisecond at
++   * 100 to 150 ms, and ranged from 7 to 94 ms at 80 ms. */
+   if (encoder == ELEMENT_X264)
+-    gst_pipeline_set_latency (GST_PIPELINE (pipeline), 80 * GST_MSECOND);
++    gst_pipeline_set_latency (GST_PIPELINE (pipeline), 120 * GST_MSECOND);
+   else
+     gst_pipeline_set_latency (GST_PIPELINE (pipeline), 500 * GST_MSECOND);
+ 

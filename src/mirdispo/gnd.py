@@ -136,11 +136,13 @@ class GnomeNetworkDisplaysService:
             return
         if not self.daemon_path:
             raise RuntimeError("Network display backend is not installed")
+        # The engine's warnings go where this process's go, the journal for an
+        # application started from the menu. Discarding them hid why a
+        # receiver was missing from the network route.
         self._process = subprocess.Popen(
             [self.daemon_path],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
 
@@ -169,6 +171,21 @@ class GnomeNetworkDisplaysService:
         manager, _ = self._dbus()
         result = manager.StartStream(uuid)
         return str(result)
+
+    def set_discover(self, discover: bool):
+        """Pause or resume the search for receivers (patch 0029).
+
+        A Wi-Fi Direct search scans other channels on the radio that carries
+        the stream, so it is paused while a picture is being sent. An engine
+        without the property is left as it is.
+        """
+        import dbus
+
+        try:
+            _, properties = self._dbus()
+            properties.Set(INTERFACE, "Discover", dbus.Boolean(discover))
+        except Exception:
+            pass
 
     def stop_stream(self, unit_name: str):
         manager, _ = self._dbus()

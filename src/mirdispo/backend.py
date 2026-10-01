@@ -60,6 +60,7 @@ class DisplayBackend(QObject):
         self._reconnects = 0
         self._stream_seen_active = False
         self._attempt_started = 0.0
+        self._discovering = True
         self.devices = DisplayModel(self)
         self.diagnostics = DiagnosticsModel(self)
         if not demo and self._service is None:
@@ -133,6 +134,18 @@ class DisplayBackend(QObject):
         return legal.source_location()
 
     def _set_status(self, status: str, text: str):
+        # Search for receivers only while not sending a picture: the search
+        # scans other channels on the radio the stream uses. It resumes as
+        # soon as a link drops, so the receiver can be found again.
+        discover = status != "streaming"
+        if not self._demo and self._service is not None and discover != self._discovering:
+            self._discovering = discover
+            setter = getattr(self._service, "set_discover", None)
+            if setter:
+                try:
+                    setter(discover)
+                except Exception:
+                    pass
         if status == "streaming":
             # The retry budget is for getting a picture back, not for the
             # whole session. Kept across a recovered drop, it let the retries

@@ -1,0 +1,20 @@
+From: Mirdispo contributors
+Subject: Send every bit of the chosen mode to the receiver
+
+The descriptor sent to the receiver in M4 names the chosen mode as one bit of
+a 32-bit table mask, but the masks were held in 16-bit variables. A mode from
+bit 16 up, 1080p24 in the CEA table (patch 0025) or any of its 4K modes, was
+sent as no mode at all.
+
+diff -ruN a/src/wfd/wfd-video-codec.c b/src/wfd/wfd-video-codec.c
+--- a/src/wfd/wfd-video-codec.c
++++ b/src/wfd/wfd-video-codec.c
+@@ -468,7 +468,7 @@
+ gchar *
+ wfd_video_codec_get_descriptor_for_resolution (WfdVideoCodec *self, const WfdResolution *resolution)
+ {
+-  guint16 cae_sup, vesa_sup, hh_sup;
++  guint32 cae_sup, vesa_sup, hh_sup;
+   guint32 slice_enc_params;
+   guint8 frame_rate_ctrl_sup;
+ 

@@ -18,7 +18,7 @@ Copyright: 2018 Benjamin Berg <bberg@redhat.com>
  GNOME Network Displays contributors
 License: GPL-3+
 Comment: Modified in September 2026 and built from GNOME Network Displays
- 0.99.0. The modifications are the twenty-five patches installed alongside this file,
+ 0.99.0. The modifications are the thirty-one patches installed alongside this file,
  covering encoder selection, stream unit naming, shutdown, PulseAudio teardown,
  a use-after-free in receiver discovery, reuse of the screen sharing
  permission, choosing the streamed display mode from both ends of the link,
@@ -32,7 +32,10 @@ Comment: Modified in September 2026 and built from GNOME Network Displays
  only when they would be late, a higher video bitrate limit, sending sooner
  with x264, counting dropped frames correctly, respecting the receiver's
  slice limit, using the constrained high profile when it gives a better
- mode, and two fixes to the CEA mode table. The complete upstream source archive is installed at
+ mode, two fixes to the CEA mode table, holding x264 under its bitrate
+ limit, sending frames evenly, keeping the PCR on video, letting the client
+ pause discovery, retrying a failed mDNS resolve, and sending every bit of
+ the chosen mode. The complete upstream source archive is installed at
  /usr/share/doc/mirdispo/gnome-network-displays-0.99.0.tar.xz;
  applying the patches to it in numerical order reproduces the source these
  binaries were built from.

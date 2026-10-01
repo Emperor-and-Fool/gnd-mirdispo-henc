@@ -1,0 +1,67 @@
+From: Mirdispo contributors
+Subject: Let the client pause the search for sinks while it streams
+
+The Wi-Fi Direct provider restarts a P2P find every 20 s for as long as the
+daemon runs, streams included. A find makes wpa_supplicant scan the social
+channels on the same radio that carries the stream. Over Wi-Fi Direct that
+radio already divides its time between the group's channel and the station's,
+and the scans come on top. The GTK app turns discovery off while it streams
+and back on afterwards; the daemon offered no way to do that.
+
+The Manager gains a read-write Discover property, bound to the provider's
+"discover", so a client can turn the search off once its stream runs and on
+again when it ends. Discovery stays on by default.
+
+diff -ruN a/src/nd-manager.c b/src/nd-manager.c
+--- a/src/nd-manager.c
++++ b/src/nd-manager.c
+@@ -40,6 +40,9 @@
+   /* Inside a Flatpak sandbox the helper is run as a child process, since
+    * systemd would start it on the host, where it is not installed. */
+   gboolean                             sandboxed;
++
++  /* Ties the Discover D-Bus property to the provider's "discover". */
++  GBinding                            *discover_binding;
+   GHashTable                          *sandboxed_streams; /* unit name -> GSubprocess */
+ };
+ 
+@@ -353,6 +356,7 @@
+ {
+   if (manager->provider)
+     {
++      g_clear_pointer (&manager->discover_binding, g_binding_unbind);
+       g_signal_handlers_disconnect_by_data (manager->provider, manager);
+       g_clear_object (&manager->provider);
+     }
+@@ -373,6 +377,11 @@
+                                manager,
+                                G_CONNECT_SWAPPED);
+ 
++      if (manager->manager_proxy)
++        manager->discover_binding = g_object_bind_property (manager->provider, "discover",
++                                                            manager->manager_proxy, "discover",
++                                                            G_BINDING_BIDIRECTIONAL | G_BINDING_SYNC_CREATE);
++
+     }
+ }
+ 
+diff -ruN a/src/org.gnome.NetworkDisplays.Manager.xml b/src/org.gnome.NetworkDisplays.Manager.xml
+--- a/src/org.gnome.NetworkDisplays.Manager.xml
++++ b/src/org.gnome.NetworkDisplays.Manager.xml
+@@ -46,6 +46,16 @@
+     <property name="Displays" type="aa{sv}" access="read" />
+ 
+     <!--
++        Discover:
++        @short_description: Whether new sinks are searched for
++
++        Searching for Wi-Fi Display sinks makes the Wi-Fi radio scan other
++        channels every few seconds, which interrupts a stream on the same
++        radio. A client turns it off while it streams and on again after.
++    -->
++    <property name="Discover" type="b" access="readwrite" />
++
++    <!--
+         StartStream:
+         @short_description: Connect and start streaming to a sink
+ 
