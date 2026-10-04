@@ -1,0 +1,119 @@
+From: Mirdispo contributors
+Subject: Know how large the shared source is before choosing a mode
+
+The mode offered to a receiver is meant to be chosen against both ends of
+the link: what the receiver can decode, and how large the thing being shared
+actually is. The second of those was never available when the choice was
+made.
+
+How large the source is was read in the function that builds the sending
+pipeline. A pipeline is built when a receiver sets up a stream, which comes
+after the two ends have agreed on a mode, so at the moment the mode was
+chosen the size was still the zero it starts as. The function that chooses a
+mode documents that zero as "unknown" and falls back to the receiver's own
+best offer, so every first attempt offered whatever the receiver named,
+however small the shared source was. A television that lists 1920x1080 was
+sent 1920x1080 for a browser window, at up to the full bitrate cap, over a
+radio that is already dividing its time with the station connection. The
+frames that could not be carried were then dropped to keep up, and the sound
+sharing that radio broke up with them.
+
+This was not particular to one desktop: the size was read too late on all of
+them.
+
+The portal hands back the streams it has granted as soon as the session
+starts, which is before the sink is started and therefore before anything is
+negotiated, so the size is read there instead. A portal that reports no size
+says so in the log, and the choice falls back to the receiver's offer as
+before, which is now a known fallback rather than the only path.
+
+diff -ruN a/src/stream/nd-stream.c b/src/stream/nd-stream.c
+--- a/src/stream/nd-stream.c
++++ b/src/stream/nd-stream.c
+@@ -134,21 +134,6 @@
+   g_debug ("NdStream: Got a stream with node ID: %d", node_id);
+   g_debug ("NdStream: Got a stream of type: %d", screencast_type);
+ 
+-  /* Tell the WFD client how large the captured screen is, so the mode
+-   * offered to the receiver is chosen against both ends of the link rather
+-   * than the receiver alone. The portal reports this per stream, so it is
+-   * whatever the user picked to share, not the desktop as a whole. */
+-  {
+-    gint32 capture_width = 0;
+-    gint32 capture_height = 0;
+-
+-    if (g_variant_lookup (stream_properties, "size", "(ii)", &capture_width, &capture_height))
+-      {
+-        g_message ("NdStream: Sharing a %ix%i source.", capture_width, capture_height);
+-        wfd_client_set_source_size (capture_width, capture_height);
+-      }
+-  }
+-
+   switch (screencast_type)
+     {
+     case ND_SCREEN_CAST_SOURCE_TYPE_MONITOR:
+@@ -526,6 +511,53 @@
+     }
+ }
+ 
++/* The mode offered to a receiver is chosen while the two ends agree on one,
++ * which begins the moment the sink starts. How large the shared source is
++ * was read where the pipeline is built instead, and a pipeline is only built
++ * once a receiver has set up a stream, by which time a mode has long been
++ * settled on. The size was therefore still zero when it was wanted, on every
++ * first attempt and on every desktop, and the receiver's own best offer was
++ * taken for want of anything to weigh it against: a window the size of a
++ * browser went out as a full 1920x1080.
++ *
++ * The portal hands back its streams as soon as the session starts, which is
++ * before any of that, so the size is read here. The mode is then chosen
++ * against both ends of the link from the first attempt, as intended. */
++static void
++nd_stream_set_source_size_from_session (NdStream *self)
++{
++  g_autoptr(GVariant) stream_properties = NULL;
++  GVariant *streams = NULL;
++  GVariantIter iter;
++  guint32 node_id;
++  gint32 width = 0;
++  gint32 height = 0;
++
++  streams = xdp_session_get_streams (self->session);
++  if (streams == NULL)
++    {
++      g_warning ("NdStream: The portal started a session that shares nothing.");
++      return;
++    }
++
++  g_variant_iter_init (&iter, streams);
++  if (!g_variant_iter_next (&iter, "(u@a{sv})", &node_id, &stream_properties))
++    {
++      g_warning ("NdStream: The portal's session holds no stream.");
++      return;
++    }
++
++  if (!g_variant_lookup (stream_properties, "size", "(ii)", &width, &height))
++    {
++      g_message ("NdStream: The portal did not say how large the shared source is; "
++                 "the mode will be chosen from what the receiver offers alone.");
++      return;
++    }
++
++  g_message ("NdStream: Sharing a %ix%i source.", width, height);
++  wfd_client_set_source_size (width, height);
++}
++
+ static void
+ nd_screencast_started_cb (GObject      *source_object,
+                           GAsyncResult *result,
+@@ -562,6 +594,10 @@
+ 
+   nd_stream_save_restore_token (session);
+ 
++  /* Before the sink starts, so that the size is known while a mode is
++   * being chosen rather than long after. */
++  nd_stream_set_source_size_from_session (self);
++
+   g_debug ("NdStream: Created screencast session");
+   g_signal_connect_object (self->session,
+                            "closed",

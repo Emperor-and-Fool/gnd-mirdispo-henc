@@ -1,0 +1,96 @@
+From: Mirdispo contributors
+Subject: Send the frame rate that was agreed on
+
+A receiver is told during setup how large a picture it will be sent and how
+often, and it expects to be sent that. Nothing held the capture to the rate
+in question. The filters either side of the scaler name a rate in their caps,
+but caps settle what a pad may carry rather than how often a frame arrives
+over it, and the one on the capture side names a ceiling rather than a rate
+at all. No element in the chain measured the rate or held it to anything.
+
+A desktop that produced frames faster than the rate agreed on therefore sent
+every one of them. Counted over ten seconds, a link set up for 30 frames a
+second was being sent about 36. The receiver threw the surplus away, which is
+seen as the picture catching about once a second while the sender reports
+nothing wrong, because from the sender's side nothing was.
+
+The surplus cost twice over. The receiver discarded a fifth of what it was
+sent, and the rate the picture is held to was divided over the larger number,
+so every frame was given about a sixth fewer bits than the rate control had
+set aside for it.
+
+The rate is now held to what was agreed, before anything is scaled or
+encoded, so no work is spent on frames that were never going to be shown.
+Frames are only dropped, never invented, so a desktop with nothing moving on
+it still sends nothing, and the agreed rate stays a ceiling rather than
+becoming a quota to fill.
+
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -187,6 +187,7 @@
+ 
+   QOSData *qos_data;
+ 
++  GstElement *videorate;
+   GstElement *scale;
+   GstElement *sinkfilter;
+   GstElement *convert;
+@@ -205,6 +206,23 @@
+   g_assert (source);
+   success &= gst_bin_add (bin, source);
+ 
++  /* A receiver is told a rate during setup and expects to be sent that rate.
++   * Nothing held the capture to it: the filters name a rate in their caps,
++   * but caps settle what a pad may carry and do not govern how often a frame
++   * arrives, and the one on the capture side names a ceiling rather than a
++   * rate at all. A desktop that produced frames faster than the rate agreed
++   * on sent every one of them, and the receiver threw the surplus away. The
++   * rate is held here instead, before anything is scaled or encoded, so the
++   * work is not done on frames that were never going to be shown. Frames are
++   * only ever dropped, never invented: a desktop with nothing moving on it
++   * still sends nothing. */
++  videorate = gst_element_factory_make ("videorate", "wfd-videorate");
++  g_object_set (videorate,
++                "drop-only", TRUE,
++                "skip-to-first", TRUE,
++                NULL);
++  success &= gst_bin_add (bin, videorate);
++
+   scale = gst_element_factory_make ("videoscale", "wfd-scale");
+   g_object_set (scale,
+                 "qos", TRUE,
+@@ -384,6 +402,7 @@
+                 NULL);
+ 
+   success &= gst_element_link_many (source,
++                                    videorate,
+                                     scale,
+                                     sinkfilter,
+                                     convert,
+@@ -617,6 +636,7 @@
+ wfd_configure_media_element (GstBin *bin, WfdParams *params)
+ {
+   g_autoptr(GstCaps) caps = NULL;
++  g_autoptr(GstElement) videorate = NULL;
+   g_autoptr(GstElement) srcfilter = NULL;
+   g_autoptr(GstElement) sinkfilter = NULL;
+   g_autoptr(GstElement) codecfilter = NULL;
+@@ -674,6 +694,17 @@
+   if (params->idr_request_capability && !(quirks & WFD_QUIRK_NO_IDR))
+     gop_size = 10 * resolution->refresh_rate;
+ 
++  /* The rate agreed with this receiver, now that it is known. */
++  videorate = gst_bin_get_by_name (bin, "wfd-videorate");
++  if (videorate != NULL)
++    {
++      g_object_set (videorate,
++                    "max-rate", (gint) resolution->refresh_rate,
++                    NULL);
++      g_message ("WfdMediaFactory: Sending at most %u frames a second, as agreed.",
++                 resolution->refresh_rate);
++    }
++
+   srcfilter = gst_bin_get_by_name (bin, "srcfilter");
+   if (srcfilter != NULL)
+     {
