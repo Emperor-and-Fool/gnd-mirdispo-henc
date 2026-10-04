@@ -144,9 +144,16 @@ Kirigami.ApplicationWindow {
                                 property bool open: false
                                 visible: displayBackend.pictureText !== ""
                                 text: (open ? "\u25BE  " : "\u25B8  ") + displayBackend.pictureText
-                                opacity: 0.6
+                                // Nothing here may change the width of this column, so the
+                                // hint that it can be clicked is the pointer and a little
+                                // more ink, neither of which takes any room.
+                                opacity: pictureHover.hovered ? 0.9 : 0.6
                                 elide: Text.ElideRight
                                 Layout.fillWidth: true
+                                HoverHandler {
+                                    id: pictureHover
+                                    cursorShape: Qt.PointingHandCursor
+                                }
                                 TapHandler {
                                     onTapped: {
                                         pictureLine.open = !pictureLine.open
