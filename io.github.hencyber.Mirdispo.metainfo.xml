@@ -44,6 +44,17 @@
     <category>AudioVideo</category>
   </categories>
   <releases>
+    <release version="3.8.0" date="2026-10-05">
+      <description>
+        <p>Casting works again on machines where it could not start at all: finding out whether the firewall was ready asked for a password behind a half-second deadline, so the prompt appeared and vanished before anyone could answer it.</p>
+        <p>The search for receivers now stops as soon as one is being reached, rather than once a picture is already arriving. It could never get that far, because the search swept the channels the two ends were trying to agree on.</p>
+        <p>The picture is sent at the rate the receiver was promised. About a sixth more frames were being sent than agreed, which the receiver threw away, and the bitrate meant for the agreed rate was spread over them.</p>
+        <p>Encoding happens on the graphics hardware where there is any, which leaves the picture unaffected by whatever else the machine is doing. It used to fall apart while its sender was being typed at.</p>
+        <p>A receiver offering a smaller picture at twice the rate is asked for that, which at a fixed bitrate is both smoother and sharper in anything that moves.</p>
+        <p>What a cast settled on is shown while it runs, and unfolding that line shows what it is doing from moment to moment.</p>
+        <p>Sound starts at seven tenths rather than full, which with a television's own volume was loud enough to reach for a remote.</p>
+      </description>
+    </release>
     <release version="3.7.0" date="2026-10-01">
       <description>
         <p>Fixes sound dropping out and the picture stuttering, especially over Wi-Fi Direct. The encoder now keeps to its bitrate limit, which it never did: busy pictures came out in bursts no wireless link carries, and the backlog reached the sound.</p>
