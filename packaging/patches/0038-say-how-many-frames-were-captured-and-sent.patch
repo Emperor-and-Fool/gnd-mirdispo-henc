@@ -1,0 +1,50 @@
+From: Mirdispo contributors
+Subject: Say how many frames were captured and how many were sent
+
+A session reported frames only when it had dropped some, which left the two
+rates unsaid the rest of the time. Silence then reads as the rate being the
+one the receiver was promised, when it may be anything at all: a desktop with
+little moving on it is captured slowly and every frame of it encoded, and
+that is the same silence as keeping up at the full rate.
+
+The difference matters for more than the picture. The distance between
+keyframes is counted in frames rather than in time, so what it comes to in
+seconds depends on a rate nothing was reporting. A link sending two frames a
+second puts a keyframe fifteen seconds apart while the setting still reads
+thirty.
+
+Both rates are now named every ten seconds, as counts and per second, so what
+leaves the encoder is known rather than inferred from what is not said. The
+line about frames dropped to keep up is unchanged and still follows when
+there were any.
+
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -120,12 +120,24 @@
+       else if (now >= qos_data->report_at)
+         {
+           gint captured = g_atomic_int_exchange (&qos_data->frames_in, 0);
++          gint seconds = (gint) (WFD_QOS_REPORT_INTERVAL / GST_SECOND);
++
++          /* Saying only that frames were dropped leaves the two rates
++           * unsaid, and silence then reads as the rate being the one that
++           * was asked for when it may be anything at all: a desktop with
++           * little moving on it is captured slowly, and every frame of it
++           * encoded, which is the same silence as keeping up at full rate.
++           * Both rates are named every time, so what is leaving is known
++           * rather than assumed. */
++          g_message ("WfdMediaFactory: %d frames captured and %u encoded in the last %d s (%.1f and %.1f a second)",
++                     captured, qos_data->frames_out, seconds,
++                     captured / (gdouble) seconds,
++                     qos_data->frames_out / (gdouble) seconds);
+ 
+           /* A couple of frames are always on their way through. */
+           if (captured > (gint) qos_data->frames_out + 2)
+             g_message ("WfdMediaFactory: %d of %d frames in the last %d s were dropped to keep up",
+-                       captured - (gint) qos_data->frames_out, captured,
+-                       (gint) (WFD_QOS_REPORT_INTERVAL / GST_SECOND));
++                       captured - (gint) qos_data->frames_out, captured, seconds);
+ 
+           qos_data->frames_out = 0;
+           qos_data->report_at = now + WFD_QOS_REPORT_INTERVAL;

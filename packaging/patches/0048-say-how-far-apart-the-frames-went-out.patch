@@ -1,0 +1,107 @@
+From: Mirdispo contributors
+Subject: Say how far apart the frames went out
+
+Everything counted so far is how much was sent: frames captured, frames
+encoded, frames carrying a picture, kilobytes each. None of it says when.
+Three hundred frames in ten seconds is the same number whether they left at
+even intervals or in pairs with gaps between them, and only one of those is
+watchable. A picture can be sharp in every frame and still move badly, and
+that is what the counts cannot show.
+
+The time each frame is meant to be shown at is already in hand where the
+frames are counted. The gaps between them are now measured there: what they
+came to on average, and the smallest and largest in the ten seconds.
+
+An even stream reads as a small spread around the frame interval, which at
+thirty a second is a little over thirty-three milliseconds. Frames arriving
+in pairs read as a smallest gap near nothing and a largest near twice the
+interval, with the same average and the same count as a stream that is
+perfectly even. That is the difference worth being able to see.
+
+Nothing about what is sent changes.
+
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -52,6 +52,17 @@
+   guint64          bytes_out;
+   guint            frames_unchanged;
+ 
++  /* How far apart frames are, rather than how many there were. A count over
++   * ten seconds is the same whether the frames in it were evenly spaced or
++   * arrived in pairs with gaps between, and only one of those is watchable:
++   * every picture can be sharp and the movement between them still stutter.
++   * What is counted elsewhere is how much is sent; this is when. */
++  GstClockTime     prev_pts;
++  GstClockTimeDiff gap_min;
++  GstClockTimeDiff gap_max;
++  GstClockTime     gap_total;
++  guint            gaps;
++
+   GstClockTime     report_at;
+ } QOSData;
+ 
+@@ -133,6 +144,20 @@
+           qos_data->frames_unchanged++;
+       }
+ 
++      if (qos_data->prev_pts != GST_CLOCK_TIME_NONE && buf->pts > qos_data->prev_pts)
++        {
++          GstClockTimeDiff gap = buf->pts - qos_data->prev_pts;
++
++          if (qos_data->gaps == 0 || gap < qos_data->gap_min)
++            qos_data->gap_min = gap;
++          if (gap > qos_data->gap_max)
++            qos_data->gap_max = gap;
++
++          qos_data->gap_total += gap;
++          qos_data->gaps++;
++        }
++      qos_data->prev_pts = buf->pts;
++
+       qos_data->frames_out++;
+       if (qos_data->report_at == 0)
+         {
+@@ -142,6 +167,9 @@
+           qos_data->frames_out = 1;
+           qos_data->bytes_out = 0;
+           qos_data->frames_unchanged = 0;
++          qos_data->gaps = 0;
++          qos_data->gap_total = 0;
++          qos_data->gap_max = 0;
+           qos_data->report_at = now + WFD_QOS_REPORT_INTERVAL;
+         }
+       else if (now >= qos_data->report_at)
+@@ -170,6 +198,14 @@
+                        qos_data->frames_unchanged,
+                        qos_data->bytes_out / 1024.0 / qos_data->frames_out);
+ 
++          /* Evenly spaced or not. A picture that is sharp and moves badly is
++           * one whose frames are the right number and at the wrong moments. */
++          if (qos_data->gaps > 0)
++            g_message ("WfdMediaFactory: frames went out every %.1f ms on average, between %.1f and %.1f",
++                       qos_data->gap_total / (gdouble) qos_data->gaps / GST_MSECOND,
++                       qos_data->gap_min / (gdouble) GST_MSECOND,
++                       qos_data->gap_max / (gdouble) GST_MSECOND);
++
+           /* A couple of frames are always on their way through. */
+           if (captured > (gint) qos_data->frames_out + 2)
+             g_message ("WfdMediaFactory: %d of %d frames in the last %d s were dropped to keep up",
+@@ -178,6 +214,9 @@
+           qos_data->frames_out = 0;
+           qos_data->bytes_out = 0;
+           qos_data->frames_unchanged = 0;
++          qos_data->gaps = 0;
++          qos_data->gap_total = 0;
++          qos_data->gap_max = 0;
+           qos_data->report_at = now + WFD_QOS_REPORT_INTERVAL;
+         }
+     }
+@@ -466,6 +505,7 @@
+   encoding_perf = gst_element_factory_make ("identity", "wfd-measure-encoder-realtime");
+   success &= gst_bin_add (bin, encoding_perf);
+   qos_data = g_new0 (QOSData, 1);
++  qos_data->prev_pts = GST_CLOCK_TIME_NONE;
+   /* x264 runs with zero latency tuning and a short pipeline latency, and a
+    * frame that is late at the sink is still sent at once, so dropping is
+    * kept for frames far behind. The other encoders keep the 50 ms they had. */

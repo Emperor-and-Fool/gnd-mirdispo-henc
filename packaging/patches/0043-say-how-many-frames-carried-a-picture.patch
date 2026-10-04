@@ -1,0 +1,101 @@
+From: Mirdispo contributors
+Subject: Say how many frames carried a picture
+
+A frame the desktop never redrew is sent again as it was. The source that
+feeds the encoder emits at the rate it was set to whether or not anything
+arrived, repeating the last frame to fill the gaps, and the counter that
+reports how many frames were encoded sits after it. So a rate the desktop
+is really producing and a rate being padded out to look like it are reported
+identically: the same number of frames, and only one of them anything to
+look at.
+
+That matters before asking a receiver for twice the rate. Sixty frames a
+second of which half say nothing changed is thirty frames a second with more
+packets, and no smoother to watch. The log would have called it sixty.
+
+A frame that says nothing changed leaves the encoder as a few hundred bytes,
+where one carrying a picture runs to tens of kilobytes even on a quiet
+desktop. That is the difference, and it is now counted: how many frames
+carried a picture, how many did not, and what the average frame came to.
+
+Nothing about what is sent changes. Asking whether a rate is real is now
+answerable, which it was not.
+
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -41,11 +41,26 @@
+   /* What was captured and what was encoded, to report dropped frames. */
+   gint             frames_in;
+   guint            frames_out;
++
++  /* A frame the desktop never redrew is sent again as it was, and comes out
++   * of the encoder as a few hundred bytes saying nothing changed. Counting
++   * how many of those there were is the only way to tell a rate that is
++   * really being produced from one that is being padded out to look like
++   * it: both are the same number of frames, and only one of them is
++   * anything to see. */
++  guint64          bytes_out;
++  guint            frames_unchanged;
++
+   GstClockTime     report_at;
+ } QOSData;
+ 
+ #define WFD_QOS_REPORT_INTERVAL (10 * GST_SECOND)
+ 
++/* Above this a frame is carrying a picture; below it, it is saying that the
++ * one before it still stands. Real frames run to tens of kilobytes even on a
++ * quiet desktop. */
++#define WFD_QOS_UNCHANGED_BYTES 1024
++
+ enum {
+   SIGNAL_CREATE_SOURCE,
+   SIGNAL_CREATE_AUDIO_SOURCE,
+@@ -109,6 +124,14 @@
+ 
+       /* Dropped frames are what makes the picture jump. Say so, so that a
+        * stuttering picture can be told apart from a slow receiver or link. */
++      {
++        gsize encoded = gst_buffer_get_size (buf);
++
++        qos_data->bytes_out += encoded;
++        if (encoded < WFD_QOS_UNCHANGED_BYTES)
++          qos_data->frames_unchanged++;
++      }
++
+       qos_data->frames_out++;
+       if (qos_data->report_at == 0)
+         {
+@@ -116,6 +139,8 @@
+            * reach the encoder, and are not drops. Count from here. */
+           g_atomic_int_set (&qos_data->frames_in, 1);
+           qos_data->frames_out = 1;
++          qos_data->bytes_out = 0;
++          qos_data->frames_unchanged = 0;
+           qos_data->report_at = now + WFD_QOS_REPORT_INTERVAL;
+         }
+       else if (now >= qos_data->report_at)
+@@ -135,12 +160,23 @@
+                      captured / (gdouble) seconds,
+                      qos_data->frames_out / (gdouble) seconds);
+ 
++          /* A rate that is really being produced from one that is only being
++           * padded out to look like it. */
++          if (qos_data->frames_out > 0)
++            g_message ("WfdMediaFactory: %u of them carried a picture (%.1f a second), %u said nothing had changed, %.0f kB each",
++                       qos_data->frames_out - qos_data->frames_unchanged,
++                       (qos_data->frames_out - qos_data->frames_unchanged) / (gdouble) seconds,
++                       qos_data->frames_unchanged,
++                       qos_data->bytes_out / 1024.0 / qos_data->frames_out);
++
+           /* A couple of frames are always on their way through. */
+           if (captured > (gint) qos_data->frames_out + 2)
+             g_message ("WfdMediaFactory: %d of %d frames in the last %d s were dropped to keep up",
+                        captured - (gint) qos_data->frames_out, captured, seconds);
+ 
+           qos_data->frames_out = 0;
++          qos_data->bytes_out = 0;
++          qos_data->frames_unchanged = 0;
+           qos_data->report_at = now + WFD_QOS_REPORT_INTERVAL;
+         }
+     }
