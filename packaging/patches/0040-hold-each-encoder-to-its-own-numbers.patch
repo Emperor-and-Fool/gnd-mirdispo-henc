@@ -1,0 +1,160 @@
+From: Mirdispo contributors
+Subject: Hold each encoder to its own numbers
+
+The rate the picture is held to, and the buffer the rate control answers to,
+were found by watching one encoder on one link. They were then applied to
+every encoder, which is how a figure that suits one comes to be imposed on
+another that it does not suit, and on machines using a third that nobody
+watched at all.
+
+Encoders do not share these numbers. They answer to different rate controls,
+reach a given picture at different costs, and come apart differently when
+asked for more than they can give. A rate one of them keeps steadily is one
+another overshoots in bursts, and a buffer that lets one borrow enough for a
+hard frame is cramped or wasteful for the next.
+
+Each now has its own line, and is tuned by changing that line. The buffer is
+written in frames, because that is what it comes to whichever unit an
+encoder asks for it in, and is turned into milliseconds or kilobits where
+the encoder is set up. Zero leaves an encoder at the receiver's announced
+maximum and its own default buffer, which is what the two that were never
+measured now get, rather than numbers found by watching something else.
+
+What is in force is said in the log, by encoder name, so a session shows
+which numbers it ran under.
+
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -684,6 +684,8 @@
+   WfdVideoCodec *codec = params->selected_codec;
+   WfdResolution *resolution = params->selected_resolution;
+   WfdGstElement encoder_impl;
++  WfdEncoderTuning tuning;
++  guint vbv_kbit;
+   WfdH264ProfileFlags profile;
+   guint gop_size = resolution->refresh_rate;
+   guint bitrate_kbit = wfd_video_codec_get_max_bitrate_kbit (codec);
+@@ -695,13 +697,6 @@
+    * Wi-Fi link carries. */
+   bitrate_kbit = MIN (bitrate_kbit, 10 * 1024);
+ 
+-  /* TESTING ONLY. Hold the picture at 4 Mbit/s, which is what the accounts of
+-   * a link that keeps going is thought to carry at 720p30, so that it
+-   * can be seen whether what breaks up here is the size of the picture or the
+-   * room the link has for it. Remove this patch to go back to 10 Mbit/s. */
+-  bitrate_kbit = MIN (bitrate_kbit, 5 * 1024);
+-  g_message ("WfdMediaFactory: Testing: holding the picture at %u kbit/s.", bitrate_kbit);
+-
+   /* At a higher refresh rate the same bitrate is spread over more frames,
+    * each of which would get fewer bits. The limit grows with the rate, so a
+    * 60 Hz frame gets as many as a 30 Hz one, still within the receiver's
+@@ -716,6 +711,20 @@
+   encoder = gst_bin_get_by_name (bin, "wfd-encoder");
+   encoder_impl = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (encoder), "wfd-encoder-impl"));
+ 
++  /* What this encoder in particular is held to, rather than one figure for
++   * all of them. Zero leaves the receiver's own maximum standing. */
++  tuning = wfd_encoder_tuning[encoder_impl];
++  if (tuning.bitrate_kbit > 0)
++    bitrate_kbit = MIN (bitrate_kbit, tuning.bitrate_kbit);
++
++  /* The buffer the rate control answers to, said in frames and turned into
++   * whatever unit this encoder takes it in further down. */
++  vbv_kbit = tuning.vbv_frames ?
++             bitrate_kbit * tuning.vbv_frames / resolution->refresh_rate : 0;
++
++  g_message ("WfdMediaFactory: %s holding the picture at %u kbit/s with a buffer of %u frames.",
++             wfd_gst_elements[encoder_impl], bitrate_kbit, tuning.vbv_frames);
++
+   if (encoder_impl == ELEMENT_VAAPIH264)
+     quirks = WFD_QUIRK_NO_IDR;
+ 
+@@ -824,7 +833,12 @@
+                      * half, so a frame that is hard to encode can borrow from
+                      * one neighbour instead of being crushed to fit. Still
+                      * nine times tighter than this encoder's own default. */
+-                    "vbv-buf-capacity", 67,
++                    /* This encoder takes the buffer in milliseconds, so the
++                     * frames it is kept in are turned into them here. Left
++                     * at its own default when nothing was measured. */
++                    "vbv-buf-capacity",
++                    tuning.vbv_frames ?
++                    (guint) (tuning.vbv_frames * 1000 / resolution->refresh_rate) : 600,
+                     /* The tools that make the high profile compress better
+                      * than baseline at the same bitrate. */
+                     "dct8x8", profile == WFD_H264_PROFILE_HIGH,
+@@ -855,17 +869,14 @@
+                     "gop-size", (gint) gop_size,
+                     NULL);
+ 
+-      /* The buffer the rate control answers to, in the units this encoder
+-       * takes it in, held to two frames the way the software one is. Said
+-       * in frames rather than in milliseconds because that is what it comes
+-       * to either way, and frames are what the number means. */
+-      if (g_object_class_find_property (G_OBJECT_GET_CLASS (encoder), "vbv-buffer-size"))
+-        g_object_set (encoder,
+-                      "vbv-buffer-size",
+-                      (guint) (bitrate_kbit * 2 / resolution->refresh_rate),
+-                      NULL);
++      /* This encoder takes the buffer in kilobits, so the frames it is kept
++       * in are turned into them here. Left to the card's own default when
++       * nothing was measured. */
++      if (vbv_kbit > 0 &&
++          g_object_class_find_property (G_OBJECT_GET_CLASS (encoder), "vbv-buffer-size"))
++        g_object_set (encoder, "vbv-buffer-size", vbv_kbit, NULL);
+ 
+-      g_message ("WfdMediaFactory: Encoding on the graphics card at %u kbit/s.", bitrate_kbit);
++      g_message ("WfdMediaFactory: Encoding on the graphics card.");
+       break;
+ 
+     case ELEMENT_VAH264:
+diff -ruN a/src/wfd/wfd-media-factory.h b/src/wfd/wfd-media-factory.h
+--- a/src/wfd/wfd-media-factory.h
++++ b/src/wfd/wfd-media-factory.h
+@@ -105,6 +105,45 @@
+ //{PROFILE_AUDIO_AAC,    ELEMENT_VIDEO_NONE, ELEMENT_AAC_FAAC,   ELEMENT_MPEGTS},
+ };
+ 
++/* What each encoder is held to.
++ *
++ * A figure found by watching one encoder says nothing about the next. They
++ * answer to different rate controls, reach a given picture at different
++ * costs, and fail in different ways when asked for more than they can give.
++ * A rate that one of them holds steadily is one another overshoots in
++ * bursts, and a buffer that lets one borrow enough for a hard frame is
++ * either cramped or wasteful for another. Holding them all to one set of
++ * numbers means the numbers suit at most one of them, and silently suit
++ * nothing at all on a machine that uses a different one.
++ *
++ * So each is given its own, and is tuned by changing its own line.
++ *
++ * bitrate_kbit: what the picture is held to, or 0 to allow whatever the
++ *               receiver announced it can take.
++ * vbv_frames:   the buffer the rate control answers to, counted in frames
++ *               rather than in time, since that is what it comes to.
++ */
++typedef struct
++{
++  guint bitrate_kbit;
++  guint vbv_frames;
++} WfdEncoderTuning;
++
++static const WfdEncoderTuning wfd_encoder_tuning[ELEMENT_NONE + 1] = {
++  /* Found by watching this encoder on a link that was breaking up: the rate
++   * it kept and the buffer that let a hard frame through without bursting. */
++  [ELEMENT_X264]      = { .bitrate_kbit = 5 * 1024, .vbv_frames = 2 },
++
++  /* Not yet found. Started where the software encoder ended so that the two
++   * can be compared, and meant to be moved from here on what is seen. */
++  [ELEMENT_NVH264]    = { .bitrate_kbit = 5 * 1024, .vbv_frames = 2 },
++
++  /* Never measured. Left to the receiver's own maximum, as before. */
++  [ELEMENT_OPENH264]  = { .bitrate_kbit = 0, .vbv_frames = 0 },
++  [ELEMENT_VAH264]    = { .bitrate_kbit = 0, .vbv_frames = 0 },
++  [ELEMENT_VAAPIH264] = { .bitrate_kbit = 0, .vbv_frames = 0 },
++};
++
+ typedef enum {
+   WFD_QUIRK_NO_IDR = 0x01,
+   WFD_QUIRK_NO_KEEPALIVE = 0x02,
