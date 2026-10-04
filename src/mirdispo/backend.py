@@ -18,7 +18,9 @@
 
 from __future__ import annotations
 
+import os
 import time
+from pathlib import Path
 
 from PyQt6.QtCore import QObject, QTimer, pyqtProperty, pyqtSignal, pyqtSlot
 
@@ -467,8 +469,31 @@ class DisplayBackend(QObject):
         self._set_status("idle", f"Screen sharing with {name} was stopped" if name
                          else "Screen sharing was stopped")
 
+    @staticmethod
+    def _forget_shared_source():
+        """Forget which screen or window was being shared.
+
+        The engine tells the portal it may remember what is being shared, so
+        that reaching a receiver again during a cast does not interrupt it to
+        ask the same question twice. That memory is meant to last the sitting
+        and no longer: being asked once is how a person says what to share,
+        and a choice made yesterday is not an answer to today's question.
+        """
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+        if not runtime_dir:
+            return
+        try:
+            Path(runtime_dir, "screencast-restore-token").unlink(missing_ok=True)
+        except OSError:
+            # Leaving a cast's last choice behind is a small matter next to
+            # failing to quit over it.
+            pass
+
     def shutdown(self):
         """Called as the application quits. A running cast is left running."""
+        # Forgotten whatever else quitting does, including when a cast is
+        # left running: the next start asks again either way.
+        self._forget_shared_source()
         if self._demo or self._service is None or self._status == "streaming":
             return
         release = getattr(self._service, "release", None)
