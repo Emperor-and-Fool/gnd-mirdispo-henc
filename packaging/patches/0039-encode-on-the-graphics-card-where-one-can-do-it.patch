@@ -1,0 +1,144 @@
+From: Mirdispo contributors
+Subject: Encode on the graphics card where one can do it
+
+Encoding in software leaves the picture at the mercy of whatever else the
+machine is asked to do. A cast held together until its sender was typed at,
+and came apart while the encoder waited its turn for a core: frames left late,
+lateness was measured after the encoder, and frames were dropped to catch up.
+Nothing about the link had changed.
+
+Cards from this vendor carry a part that does nothing but encode. It is not
+the part that draws, so a cast costs the desktop nothing, and it does not
+queue behind a browser. A picture this size is little work for it.
+
+This is not the hardware encoding the note above the table turns away from.
+That is VA-API, and the fault recorded there was in that driver's own
+teardown. This reaches none of that code: another library, another driver,
+another vendor. The choice is left where it can be revisited: should it ever
+abort the way VA-API did, it belongs below software for the same reason, by
+moving four lines.
+
+The rate control is given the same shape as the software encoder was: a held
+rate, no frame waiting on a later one, no lookahead, and a buffer of two
+frames. The headers a receiver needs in order to start reading again are
+repeated with every keyframe, since the receivers this is for cannot always
+ask for anything back.
+
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -5,6 +5,7 @@
+ static const gchar * wfd_gst_elements[ELEMENT_NONE + 1] = {
+   [ELEMENT_OPENH264] = "openh264enc",
+   [ELEMENT_X264] = "x264enc",
++  [ELEMENT_NVH264] = "nvh264enc",
+   [ELEMENT_VAH264] = "vah264enc",
+   [ELEMENT_VAAPIH264] = "vaapih264enc",
+   [ELEMENT_VIDEO_NONE] = NULL,
+@@ -297,6 +298,29 @@
+        *  - rate-control: 2, buffer*/
+       break;
+ 
++    case ELEMENT_NVH264:
++      encoder = gst_element_factory_make ("nvh264enc", "wfd-encoder");
++      encoder_elem = encoder;
++      success &= gst_bin_add (bin, encoder);
++      g_object_set (encoder,
++                    "qos", TRUE,
++                    /* A frame may not wait for one that comes after it. */
++                    "zerolatency", TRUE,
++                    /* Sent to a receiver that cannot ask for anything back,
++                     * so the headers it needs to start reading again are
++                     * repeated with every keyframe rather than sent once. */
++                    "repeat-sequence-header", TRUE,
++                    "preset", 11,  /* p4, medium */
++                    "tune", 3,     /* ultra low latency */
++                    NULL);
++
++      /* Both are only there on cards that can do them. */
++      if (g_object_class_find_property (G_OBJECT_GET_CLASS (encoder), "bframes"))
++        g_object_set (encoder, "bframes", (guint) 0, NULL);
++      if (g_object_class_find_property (G_OBJECT_GET_CLASS (encoder), "rc-lookahead"))
++        g_object_set (encoder, "rc-lookahead", (guint) 0, NULL);
++      break;
++
+     case ELEMENT_X264:
+       encoder = gst_element_factory_make ("x264enc", "wfd-encoder");
+       encoder_elem = encoder;
+@@ -372,7 +396,8 @@
+   /* x264 runs with zero latency tuning and a short pipeline latency, and a
+    * frame that is late at the sink is still sent at once, so dropping is
+    * kept for frames far behind. The other encoders keep the 50 ms they had. */
+-  if (wfd_media_factory_profiles[self->factory_profile].video_encoder == ELEMENT_X264)
++  if (wfd_media_factory_profiles[self->factory_profile].video_encoder == ELEMENT_X264 ||
++      wfd_media_factory_profiles[self->factory_profile].video_encoder == ELEMENT_NVH264)
+     qos_data->budget = 100 * GST_MSECOND;
+   else
+     qos_data->budget = 50 * GST_MSECOND;
+@@ -817,6 +842,32 @@
+                     NULL);
+       break;
+ 
++    case ELEMENT_NVH264:
++      if (codec->profile == WFD_H264_PROFILE_HIGH)
++        profile = WFD_H264_PROFILE_HIGH;
++      else
++        profile = WFD_H264_PROFILE_BASE;
++
++      g_object_set (encoder,
++                    "rc-mode", 2, /* constant bitrate */
++                    "bitrate", (guint) bitrate_kbit,
++                    "max-bitrate", (guint) bitrate_kbit,
++                    "gop-size", (gint) gop_size,
++                    NULL);
++
++      /* The buffer the rate control answers to, in the units this encoder
++       * takes it in, held to two frames the way the software one is. Said
++       * in frames rather than in milliseconds because that is what it comes
++       * to either way, and frames are what the number means. */
++      if (g_object_class_find_property (G_OBJECT_GET_CLASS (encoder), "vbv-buffer-size"))
++        g_object_set (encoder,
++                      "vbv-buffer-size",
++                      (guint) (bitrate_kbit * 2 / resolution->refresh_rate),
++                      NULL);
++
++      g_message ("WfdMediaFactory: Encoding on the graphics card at %u kbit/s.", bitrate_kbit);
++      break;
++
+     case ELEMENT_VAH264:
+       if (codec->profile == WFD_H264_PROFILE_HIGH)
+         profile = WFD_H264_PROFILE_HIGH;
+diff -ruN a/src/wfd/wfd-media-factory.h b/src/wfd/wfd-media-factory.h
+--- a/src/wfd/wfd-media-factory.h
++++ b/src/wfd/wfd-media-factory.h
+@@ -25,6 +25,7 @@
+ typedef enum {
+   ELEMENT_OPENH264,
+   ELEMENT_X264,
++  ELEMENT_NVH264,
+   ELEMENT_VAH264,
+   ELEMENT_VAAPIH264,
+   ELEMENT_VIDEO_NONE,
+@@ -61,6 +62,22 @@
+    * this process can prevent it, so the encoder that does not reach that
+    * code is used. VA encoders stay as fallbacks for machines without x264.
+    */
++  /* Encoding in software leaves the picture at the mercy of whatever else
++   * the machine is asked to do: a cast held together until its sender was
++   * typed at, and fell apart while the encoder waited its turn for a core.
++   * A dedicated encoder on a graphics card does not queue behind a browser,
++   * and the part of the card that does it is not the part that draws, so
++   * nothing else slows down for it either.
++   *
++   * This is not the hardware encoding the note below turns away from. That
++   * is VA-API, and the fault was in that driver's own teardown. This reaches
++   * none of that code: a different library, a different driver, a different
++   * vendor. If it should ever abort the way VA-API did, it belongs below
++   * software in the same way and for the same reason. */
++  {PROFILE_HIGH_H264,    ELEMENT_NVH264,     ELEMENT_AAC_FDK,    ELEMENT_MPEGTS},
++  {PROFILE_HIGH_H264,    ELEMENT_NVH264,     ELEMENT_AAC_AVENC,  ELEMENT_MPEGTS},
++  {PROFILE_HIGH_H264,    ELEMENT_NVH264,     ELEMENT_AAC_FAAC,   ELEMENT_MPEGTS},
++  {PROFILE_HIGH_H264,    ELEMENT_NVH264,     ELEMENT_AUDIO_NONE, ELEMENT_MPEGTS},
+   {PROFILE_HIGH_H264,    ELEMENT_X264,       ELEMENT_AAC_FDK,    ELEMENT_MPEGTS},
+   {PROFILE_HIGH_H264,    ELEMENT_X264,       ELEMENT_AAC_AVENC,  ELEMENT_MPEGTS},
+   {PROFILE_HIGH_H264,    ELEMENT_X264,       ELEMENT_AAC_FAAC,   ELEMENT_MPEGTS},

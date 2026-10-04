@@ -1,0 +1,58 @@
+From: Mirdispo contributors
+Subject: Match the card's bitstream to the software one, and say how a picture may be cut
+
+Two encoders were watched against the same receiver and the same link. One
+was followed; the other was not, and only ever showed a whole picture when a
+keyframe reached it. What they were asked for differed in one way that was
+nobody's finding: the card was told to repeat the headers a receiver needs
+in order to start reading, with every keyframe, where the software encoder
+sends them once.
+
+That was added as something a receiver which cannot ask for anything back
+might want. It may well be, but it was never measured, and it is the only
+thing one encoder was doing that the other was not. It is dropped, so that
+what the two send differs as little as it can while the difference is still
+being looked for. Worth returning to deliberately once something is known.
+
+How a picture may be cut into slices has been guessed at twice in the course
+of the same question, by two readers who each concluded what suited them and
+neither of whom looked. It is the receiver's own statement, it is already in
+hand, and it decides what the software encoder is told to do. It is now said
+in the log, so it stops being a thing to assume.
+
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -306,10 +306,14 @@
+                     "qos", TRUE,
+                     /* A frame may not wait for one that comes after it. */
+                     "zerolatency", TRUE,
+-                    /* Sent to a receiver that cannot ask for anything back,
+-                     * so the headers it needs to start reading again are
+-                     * repeated with every keyframe rather than sent once. */
+-                    "repeat-sequence-header", TRUE,
++                    /* Left as the software encoder leaves it. Repeating the
++                     * headers with every keyframe was added here as something
++                     * a receiver that cannot ask for anything back might
++                     * want, but the software encoder does not do it and was
++                     * watched working, so this is one fewer way for the two
++                     * to differ while the difference is still being looked
++                     * for. */
++                    "repeat-sequence-header", FALSE,
+                     "preset", 11,  /* p4, medium */
+                     "tune", 3,     /* ultra low latency */
+                     NULL);
+@@ -725,6 +729,13 @@
+   g_message ("WfdMediaFactory: %s holding the picture at %u kbit/s with a buffer of %u frames.",
+              wfd_gst_elements[encoder_impl], bitrate_kbit, tuning.vbv_frames);
+ 
++  /* How a picture may be cut up is the receiver's own statement, and what
++   * the software encoder is told to do follows it. It has been guessed at
++   * twice while asking why one encoder suits this receiver and another does
++   * not, so it is said plainly instead. */
++  g_message ("WfdMediaFactory: The receiver takes up to %u slices a picture.",
++             codec->max_slice_num);
++
+   if (encoder_impl == ELEMENT_VAAPIH264)
+     quirks = WFD_QUIRK_NO_IDR;
+ 
