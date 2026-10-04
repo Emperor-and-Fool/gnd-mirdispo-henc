@@ -136,6 +136,13 @@ Kirigami.ApplicationWindow {
                                 elide: Text.ElideRight
                                 Layout.fillWidth: true
                             }
+                            Controls.Label {
+                                text: displayBackend.pictureText
+                                visible: text !== ""
+                                opacity: 0.6
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
                         }
                         Controls.Button {
                             text: "Disconnect"

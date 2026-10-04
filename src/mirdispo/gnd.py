@@ -191,6 +191,27 @@ class GnomeNetworkDisplaysService:
         manager, _ = self._dbus()
         manager.StopStream(unit_name)
 
+    def stream_picture(self, unit_name: str) -> str | None:
+        """What the helper settled on with the receiver: the size of the
+        picture, how often it is sent, what the rate is held to and which
+        encoder is doing it. None while there is nothing settled yet, or
+        where the helper is older than the action."""
+        import dbus
+
+        name = stream_bus_name(unit_name)
+        if not name:
+            return None
+        try:
+            if not self._name_has_owner(name):
+                return None
+            actions = dbus.Interface(self.bus.get_object(name, "/" + name.replace(".", "/")),
+                                     "org.gtk.Actions")
+            _enabled, _parameter, state = actions.Describe("picture")
+            picture = str(state[0]) if state else ""
+            return picture or None
+        except Exception:
+            return None
+
     def stream_state(self, unit_name: str) -> str | None:
         """What the stream helper reports: "wait-p2p", "wait-socket",
         "wait-streaming", "streaming" and so on (patch 0012), or None when

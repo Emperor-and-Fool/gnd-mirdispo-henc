@@ -53,6 +53,7 @@ class DisplayBackend(QObject):
         self._diagnostic_collector = diagnostic_collector or collect_diagnostics
         self._status = "idle"
         self._status_text = "Ready to find nearby displays"
+        self._picture_text = ""
         self._scanning = False
         self._selected = ""
         self._selected_id = ""
@@ -98,6 +99,14 @@ class DisplayBackend(QObject):
     @pyqtProperty(str, notify=statusChanged)
     def statusText(self):
         return self._status_text
+
+    @pyqtProperty(str, notify=statusChanged)
+    def pictureText(self):
+        """What the engine settled on with the receiver, in words, or empty
+        while nothing has been settled. Shown rather than kept, because the
+        one thing somebody watching might want to know is what they are being
+        sent."""
+        return self._picture_text
 
     @pyqtProperty(bool, notify=scanningChanged)
     def scanning(self):
@@ -216,6 +225,10 @@ class DisplayBackend(QObject):
                 # running decides how the link state should be read.
                 if self._stream_unit and self._status in ("connecting", "streaming"):
                     helper_state = getattr(self._service, "stream_state", lambda _unit: None)(self._stream_unit)
+                    picture = getattr(self._service, "stream_picture", lambda _unit: None)(self._stream_unit)
+                    if (picture or "") != self._picture_text:
+                        self._picture_text = picture or ""
+                        self.statusChanged.emit()
                     if helper_state == "ended":
                         # Stopped from the desktop, such as Plasma's screen
                         # sharing indicator. Reconnecting would share the

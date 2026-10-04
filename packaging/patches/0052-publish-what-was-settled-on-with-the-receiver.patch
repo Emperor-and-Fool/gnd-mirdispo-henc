@@ -1,0 +1,118 @@
+From: Mirdispo contributors
+Subject: Publish what was settled on with the receiver
+
+What a cast actually ended up doing - the size of the picture, how often it
+is sent, what the rate is held to, and which encoder is doing the work - is
+known where the picture is set up and nowhere else. It was written to the log,
+which is the wrong place for it: somebody watching a television is not reading
+a journal, and the one thing they might reasonably want to know is what they
+are being shown.
+
+It is recorded as it is settled, and published beside the state the helper
+already publishes, under the same name a client already knows how to find. A
+client that does not ask for it is unaffected, and it says nothing until there
+is something to say.
+
+This is the first thing to travel in that direction. Everything measured so
+far has gone one way, into the log, where it could be read afterwards by
+whoever knew to look.
+
+diff -ruN a/src/stream/nd-stream.c b/src/stream/nd-stream.c
+--- a/src/stream/nd-stream.c
++++ b/src/stream/nd-stream.c
+@@ -30,6 +30,7 @@
+ #include "nd-stream.h"
+ #include <glib/gstdio.h>
+ #include "wfd/wfd-client.h"
++#include "wfd/wfd-media-factory.h"
+ #include "nd-pulseaudio.h"
+ #include "nd-sink.h"
+ 
+@@ -50,6 +51,7 @@
+ 
+   NdSink                *sink;
+   GSimpleAction         *state_action;
++  GSimpleAction         *picture_action;
+   gboolean               ended_by_user;
+ };
+ 
+@@ -401,6 +403,12 @@
+                                                      g_variant_new_string ("starting"));
+   g_action_map_add_action (G_ACTION_MAP (app), G_ACTION (self->state_action));
+ 
++  /* What was settled on with the receiver, published beside the state so a
++   * client can show it. Empty until there is something to say. */
++  self->picture_action = g_simple_action_new_stateful ("picture", NULL,
++                                                       g_variant_new_string (""));
++  g_action_map_add_action (G_ACTION_MAP (app), G_ACTION (self->picture_action));
++
+   g_debug ("NdStream: Startup");
+   /* Run indefinitely, until told to exit. */
+   g_application_hold (app);
+@@ -454,6 +462,16 @@
+ 
+   if (self->state_action && value)
+     g_simple_action_set_state (self->state_action, g_variant_new_string (value->value_nick));
++
++  /* Settled on once the two ends have agreed, which is any time from here
++   * on, so it is read whenever the state moves rather than waited for. */
++  if (self->picture_action)
++    {
++      const gchar *picture = wfd_media_factory_get_picture ();
++
++      if (picture != NULL)
++        g_simple_action_set_state (self->picture_action, g_variant_new_string (picture));
++    }
+ }
+ 
+ static void
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -69,6 +69,18 @@
+ 
+ #define WFD_QOS_REPORT_INTERVAL (10 * GST_SECOND)
+ 
++/* What was settled on for the cast now running, in words, so that the part
++ * of the program a person is looking at can say it. Everything here is known
++ * where a picture is set up and nowhere else, and until now it was only ever
++ * written to the log, where nobody watching a television is looking. */
++static gchar *wfd_picture_description = NULL;
++
++const gchar *
++wfd_media_factory_get_picture (void)
++{
++  return wfd_picture_description;
++}
++
+ enum {
+   SIGNAL_CREATE_SOURCE,
+   SIGNAL_CREATE_AUDIO_SOURCE,
+@@ -871,6 +883,12 @@
+   g_message ("WfdMediaFactory: The receiver takes up to %u slices a picture.",
+              codec->max_slice_num);
+ 
++  g_clear_pointer (&wfd_picture_description, g_free);
++  wfd_picture_description = g_strdup_printf ("%ix%i at %i Hz, %u kbit/s, %s",
++                                             resolution->width, resolution->height,
++                                             resolution->refresh_rate, bitrate_kbit,
++                                             wfd_gst_elements[encoder_impl]);
++
+   if (encoder_impl == ELEMENT_VAAPIH264)
+     quirks = WFD_QUIRK_NO_IDR;
+ 
+diff -ruN a/src/wfd/wfd-media-factory.h b/src/wfd/wfd-media-factory.h
+--- a/src/wfd/wfd-media-factory.h
++++ b/src/wfd/wfd-media-factory.h
+@@ -213,6 +213,11 @@
+ GstBin * wfd_media_factory_create_audio_element (WfdMediaFactory *self);
+ WfdMediaQuirks wfd_configure_media_element (GstBin    *bin,
+                                             WfdParams *params);
++
++/* What was settled on for the cast now running: the size of the picture, how
++ * often it is sent, what it is held to, and which encoder is doing it. NULL
++ * until a receiver has been negotiated with. */
++const gchar * wfd_media_factory_get_picture (void);
+ void wfd_media_factory_finalize (GObject *object);
+ 
+ G_END_DECLS
