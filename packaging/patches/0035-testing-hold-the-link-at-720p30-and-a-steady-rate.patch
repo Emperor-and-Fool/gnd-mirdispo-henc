@@ -1,0 +1,129 @@
+From: Mirdispo contributors
+Subject: Testing: hold the link at 720p30 and a steady rate
+
+Not a patch to keep. It fixes the format of every link so that one question
+can be answered: whether what breaks up a cast here is the size of the
+picture, the room the link has for it, or the way the rate rises and falls.
+Nothing can be chosen sensibly, by a person or by the code, until it is known
+which of those is doing the damage.
+
+Three things are held still at once, which is the point rather than a flaw.
+Separating them matters when a fix is designed; what is wanted first is to
+know whether the format is where the trouble lives at all.
+
+The mode becomes 1280x720 at 30 Hz whenever the receiver announces it. A
+receiver that announces 720p at 60 Hz announces it at 30 Hz too, and a source
+may send the slower of the two. A receiver that announces no 720p at 30 Hz is
+left to choose as before, and says so in the log.
+
+The picture is held at 5 Mbit/s rather than 10, a figure being moved between
+runs to find where the link stops carrying what is asked of it. At 720p that
+is a far larger share per pixel than 10 Mbit/s ever was at 1080p.
+
+The rate is held steady rather than allowed to rise and fall with how hard
+the picture is: x264's pass becomes constant bitrate instead of constant
+quality. A radio that already divides its time between a group and a station
+is said to carry a steady rate where it drops a bursty one. The other encoder
+already sends a held rate, so nothing about it changes.
+
+Each of the three says in the log what it did, so a session can be read back
+without guessing which of them was in force.
+
+
+The buffer the rate control works against is widened from 50 ms to 67 ms,
+which at 30 Hz is two frames rather than one and a half. A frame that is
+hard to encode can then borrow from one neighbour instead of being crushed
+to fit, which is what makes the picture lurch in sharpness under a held rate.
+It is still nine times tighter than the encoder sets by default, so what is
+sent stays close to what the link can take at once.
+diff -ruN a/src/wfd/wfd-client.c b/src/wfd/wfd-client.c
+--- a/src/wfd/wfd-client.c
++++ b/src/wfd/wfd-client.c
+@@ -242,16 +242,36 @@
+ static WfdResolution *
+ wfd_client_best_mode (WfdVideoCodec *codec, gint width, gint height)
+ {
+-  g_autoptr(GList) preferred = wfd_video_codec_get_resolutions_cea (codec);
+-  g_autoptr(GList) all = NULL;
+-  WfdResolution *best = wfd_client_pick_resolution (preferred, width, height);
++  g_autoptr(GList) preferred = NULL;
++  g_autoptr(GList) all = wfd_video_codec_get_resolutions (codec);
++  WfdResolution *best = NULL;
+ 
+-  if (!best)
++  /* TESTING ONLY. Hold every link at 1280x720 at 30 Hz, which is the format
++   * the accounts of what survives a Wi-Fi Direct link agree on, so that what
++   * a steadier one is worth here can be measured before anything is built to
++   * choose between them. A receiver that announces 720p at 60 Hz announces it
++   * at 30 Hz as well, and a source is free to send the slower of the two.
++   * Remove this patch to go back to choosing a mode. */
++  for (GList *item = all; item; item = item->next)
+     {
+-      all = wfd_video_codec_get_resolutions (codec);
+-      best = wfd_client_pick_resolution (all, width, height);
++      WfdResolution *candidate = (WfdResolution *) item->data;
++
++      if (candidate->width == 1280 && candidate->height == 720 &&
++          candidate->refresh_rate == 30 && !candidate->interlaced)
++        {
++          g_message ("WfdClient: Testing: holding the link at 1280x720@30.");
++          return candidate;
++        }
+     }
+ 
++  g_message ("WfdClient: Testing: the receiver does not announce 1280x720@30; choosing as before.");
++
++  preferred = wfd_video_codec_get_resolutions_cea (codec);
++  best = wfd_client_pick_resolution (preferred, width, height);
++
++  if (!best)
++    best = wfd_client_pick_resolution (all, width, height);
++
+   return best;
+ }
+ 
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -638,6 +638,13 @@
+    * Wi-Fi link carries. */
+   bitrate_kbit = MIN (bitrate_kbit, 10 * 1024);
+ 
++  /* TESTING ONLY. Hold the picture at 4 Mbit/s, which is what the accounts of
++   * a link that keeps going is thought to carry at 720p30, so that it
++   * can be seen whether what breaks up here is the size of the picture or the
++   * room the link has for it. Remove this patch to go back to 10 Mbit/s. */
++  bitrate_kbit = MIN (bitrate_kbit, 5 * 1024);
++  g_message ("WfdMediaFactory: Testing: holding the picture at %u kbit/s.", bitrate_kbit);
++
+   /* At a higher refresh rate the same bitrate is spread over more frames,
+    * each of which would get fewer bits. The limit grows with the rate, so a
+    * 60 Hz frame gets as many as a 30 Hz one, still within the receiver's
+@@ -729,7 +736,13 @@
+                      * scrolling page came out at 25 Mbit/s and a noisy
+                      * picture at 390 Mbit/s, in frames of up to 1.8 MB,
+                      * which no Wi-Fi link carries without backing up. */
+-                    "pass", 5,
++                    /* TESTING ONLY. 0 is GST_X264_ENC_PASS_CBR, which holds
++                     * the rate steady instead of letting it rise and fall
++                     * with how hard the picture is. A link that carries a
++                     * steady rate is said to keep going where one asked for
++                     * bursts does not, and that is what is being measured.
++                     * Remove this patch to go back to 5, constant quality. */
++                    "pass", 0,
+                     "tune", 0x4, /* zero latency */
+                     "speed-preset", 1, /* ultrafast */
+                     "rc-lookahead", 1,
+@@ -739,7 +752,11 @@
+                      * A receiver that does not take several slices per
+                      * picture gets one. */
+                     "threads", (guint) CLAMP (codec->max_slice_num, 1, 4),
+-                    "vbv-buf-capacity", 50,
++                    /* TESTING ONLY. Two frames at 30 Hz rather than one and a
++                     * half, so a frame that is hard to encode can borrow from
++                     * one neighbour instead of being crushed to fit. Still
++                     * nine times tighter than this encoder's own default. */
++                    "vbv-buf-capacity", 67,
+                     /* The tools that make the high profile compress better
+                      * than baseline at the same bitrate. */
+                     "dct8x8", profile == WFD_H264_PROFILE_HIGH,

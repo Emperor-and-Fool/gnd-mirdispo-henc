@@ -1,0 +1,70 @@
+From: Mirdispo contributors
+Subject: Let the mode be chosen again, and give the card the room it has
+
+Every link was held at 1280x720 at 30 Hz to find out whether the format was
+what kept breaking a cast. It was not: what kept breaking it was a group
+sharing the lower band with the station it was already on, and the picture
+came right when the two were separated rather than when the format changed.
+
+So the mode is chosen again from what a receiver offers and what is being
+shared, as it was meant to be. On this receiver that comes to 1920x1080 at
+30 Hz, which it announces and which is twice the picture.
+
+Twice the picture is given twice the rate. Five megabits were what a crowded
+lower band would carry; the upper one carries what is asked of it, with less
+than a hundredth of what is sent needing a second attempt and no frame yet
+dropped on the way to the encoder. The rate control is left where it was,
+answering to two frames.
+
+A rate held steady rather than left to rise and fall stays, and so does the
+cadence: both were measured, and neither was the thing that was wrong.
+
+diff -ruN a/src/wfd/wfd-client.c b/src/wfd/wfd-client.c
+--- a/src/wfd/wfd-client.c
++++ b/src/wfd/wfd-client.c
+@@ -246,26 +246,6 @@
+   g_autoptr(GList) all = wfd_video_codec_get_resolutions (codec);
+   WfdResolution *best = NULL;
+ 
+-  /* TESTING ONLY. Hold every link at 1280x720 at 30 Hz, which is the format
+-   * the accounts of what survives a Wi-Fi Direct link agree on, so that what
+-   * a steadier one is worth here can be measured before anything is built to
+-   * choose between them. A receiver that announces 720p at 60 Hz announces it
+-   * at 30 Hz as well, and a source is free to send the slower of the two.
+-   * Remove this patch to go back to choosing a mode. */
+-  for (GList *item = all; item; item = item->next)
+-    {
+-      WfdResolution *candidate = (WfdResolution *) item->data;
+-
+-      if (candidate->width == 1280 && candidate->height == 720 &&
+-          candidate->refresh_rate == 30 && !candidate->interlaced)
+-        {
+-          g_message ("WfdClient: Testing: holding the link at 1280x720@30.");
+-          return candidate;
+-        }
+-    }
+-
+-  g_message ("WfdClient: Testing: the receiver does not announce 1280x720@30; choosing as before.");
+-
+   preferred = wfd_video_codec_get_resolutions_cea (codec);
+   best = wfd_client_pick_resolution (preferred, width, height);
+ 
+diff -ruN a/src/wfd/wfd-media-factory.h b/src/wfd/wfd-media-factory.h
+--- a/src/wfd/wfd-media-factory.h
++++ b/src/wfd/wfd-media-factory.h
+@@ -134,9 +134,12 @@
+    * it kept and the buffer that let a hard frame through without bursting. */
+   [ELEMENT_X264]      = { .bitrate_kbit = 5 * 1024, .vbv_frames = 2 },
+ 
+-  /* Not yet found. Started where the software encoder ended so that the two
+-   * can be compared, and meant to be moved from here on what is seen. */
+-  [ELEMENT_NVH264]    = { .bitrate_kbit = 5 * 1024, .vbv_frames = 2 },
++  /* Found on a link with room to spare: a radio of its own in the upper band,
++   * eight tenths of a percent of what it sends asked for twice, and nothing
++   * dropped on the way to the encoder. Five megabits were what a crowded
++   * lower band would carry; ten are what this one does, and a picture of
++   * twice the size needs them. */
++  [ELEMENT_NVH264]    = { .bitrate_kbit = 10 * 1024, .vbv_frames = 2 },
+ 
+   /* Never measured. Left to the receiver's own maximum, as before. */
+   [ELEMENT_OPENH264]  = { .bitrate_kbit = 0, .vbv_frames = 0 },
