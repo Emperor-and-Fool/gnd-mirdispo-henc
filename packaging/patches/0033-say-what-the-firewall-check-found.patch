@@ -1,0 +1,90 @@
+From: Mirdispo contributors
+Subject: Say what the firewall check found
+
+Setting the firewall up for a cast asks firewalld three things in turn, and
+reported none of them. Every step that failed returned its error to the
+caller without a word in the log, including the one case that is not an
+answer from firewalld at all but a deadline running out on this side. A cast
+that stopped at the firewall left behind a single line, written by the sink,
+that said the zone was missing. That line was true about what the sink had
+been told and said nothing about which of the three calls had failed, or
+why, and reading the zone turned out to be a different problem from the one
+it described.
+
+Each step now says what came of it: which zones were asked for, whether the
+one that is wanted was among them, whether it had to be created, and whether
+firewalld loaded it. The failures say so too, and the one that comes from
+this side names the error domain and code, so a deadline that ran out cannot
+be mistaken for a refusal by firewalld again.
+
+Nothing about what the code does changes. How long each step took is left to
+the timestamps the log already carries.
+
+diff -ruN a/src/nd-firewalld.c b/src/nd-firewalld.c
+--- a/src/nd-firewalld.c
++++ b/src/nd-firewalld.c
+@@ -50,10 +50,13 @@
+   val = g_dbus_connection_call_finish (connection, res, &error);
+   if (!val)
+     {
++      g_warning ("NdFirewalld: Could not get firewalld to load the zone: %s", error->message);
+       g_task_return_error (task, error);
+       return;
+     }
+ 
++  g_debug ("NdFirewalld: Firewalld loaded the zone; the firewall is ready.");
++
+   /* Assume everything is fine (though, we should maybe double check the configuration). */
+   g_task_return_boolean (task, TRUE);
+ }
+@@ -71,10 +74,13 @@
+   val = g_dbus_connection_call_finish (connection, res, &error);
+   if (!val)
+     {
++      g_warning ("NdFirewalld: Could not create the zone: %s", error->message);
+       g_task_return_error (task, error);
+       return;
+     }
+ 
++  g_debug ("NdFirewalld: Created the zone; asking firewalld to load it.");
++
+   /* We created a zone, but it will not be loaded yet. We also need to
+    * trigger a reload after doing this. */
+   cancellable = g_task_get_cancellable (task);
+@@ -211,6 +217,12 @@
+           return;
+         }
+ 
++      /* Not an answer from firewalld but a failure on this side, which is
++       * where a deadline that ran out ends up. Saying so is the difference
++       * between a report that names the cause and one that does not. */
++      g_warning ("NdFirewalld: Could not ask firewalld for the zone names: %s (%s %d)",
++                 error->message, g_quark_to_string (error->domain), error->code);
++
+       g_task_return_error (task, error);
+       return;
+     }
+@@ -223,12 +235,13 @@
+     {
+       if (g_str_equal (zones[i], ND_WFD_ZONE))
+         {
++          g_message ("NdFirewalld: Firewalld named the %s zone; nothing to set up.", ND_WFD_ZONE);
+           g_task_return_boolean (task, TRUE);
+           return;
+         }
+     }
+ 
+-  g_debug ("NdFirewalld: The zone is not there yet; will create it.");
++  g_message ("NdFirewalld: The zone is not there yet; will create it.");
+   create_wfd_zone (g_steal_pointer (&task), connection);
+ }
+ 
+@@ -256,6 +269,8 @@
+       return;
+     }
+ 
++  g_message ("NdFirewalld: Asking firewalld which zones it has.");
++
+   g_dbus_connection_call (connection,
+                           FIREWALLD_NAME,
+                           FIREWALLD_PATH,

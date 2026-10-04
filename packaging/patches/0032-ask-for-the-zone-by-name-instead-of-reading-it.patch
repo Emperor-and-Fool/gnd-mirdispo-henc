@@ -1,0 +1,89 @@
+From: Mirdispo contributors
+Subject: Ask for the zone by name instead of reading it
+
+Starting a stream first asks firewalld whether the Wi-Fi Display zone is
+there, so it knows whether it has to be created. It asked by reading the
+zone's full settings, with a short deadline and without permission to prompt
+for a password, which is the right shape for a quick check.
+
+Reading a zone's settings is a privileged action, though. firewalld guards
+it with org.fedoraproject.FirewallD1.config.info, which is auth_admin_keep,
+so it asks polkit, and polkit raises a password prompt. The caller's refusal
+to allow prompting does not reach that decision: firewalld makes it, and it
+does not answer the call until the prompt has been answered. The deadline
+runs out long before anyone can type a password, and runs out locally, so
+the failure is not an answer from firewalld and does not reach the branch
+that creates the zone. The stream stopped and reported the zone as missing
+while the zone sat there in place.
+
+Listing the zone names is not privileged. firewalld guards that with
+org.fedoraproject.FirewallD1.info, which is allowed for an active local
+user, so it answers at once and never prompts.
+
+The names are now what is asked for, and the one we need is looked for among
+them. The settings were never used: the reply was received, checked for
+being an error, and thrown away, which the comment left behind at the end of
+the callback admits. A name is all the question ever needed.
+
+diff -ruN a/src/nd-firewalld.c b/src/nd-firewalld.c
+--- a/src/nd-firewalld.c
++++ b/src/nd-firewalld.c
+@@ -178,12 +178,13 @@
+ }
+ 
+ static void
+-get_zone_settings_cb (GObject *source_object, GAsyncResult *res, gpointer user_data)
++get_zones_cb (GObject *source_object, GAsyncResult *res, gpointer user_data)
+ {
+   GDBusConnection *connection = G_DBUS_CONNECTION (source_object);
+ 
+   g_autoptr(GTask) task = G_TASK (user_data);
+   g_autoptr(GVariant) val = NULL;
++  g_autofree const char **zones = NULL;
+   GError *error = NULL;
+ 
+   val = g_dbus_connection_call_finish (connection, res, &error);
+@@ -214,8 +215,21 @@
+       return;
+     }
+ 
+-  /* Assume everything is fine (though, we should maybe double check the configuration). */
+-  g_task_return_boolean (task, TRUE);
++  /* The name is the whole question: either the zone is there, and there is
++   * nothing to do, or it is not and has to be created. */
++  g_variant_get_child (val, 0, "^a&s", &zones);
++
++  for (gsize i = 0; zones && zones[i]; i++)
++    {
++      if (g_str_equal (zones[i], ND_WFD_ZONE))
++        {
++          g_task_return_boolean (task, TRUE);
++          return;
++        }
++    }
++
++  g_debug ("NdFirewalld: The zone is not there yet; will create it.");
++  create_wfd_zone (g_steal_pointer (&task), connection);
+ }
+ 
+ void
+@@ -245,14 +259,14 @@
+   g_dbus_connection_call (connection,
+                           FIREWALLD_NAME,
+                           FIREWALLD_PATH,
+-                          FIREWALLD_NAME,
+-                          "getZoneSettings",
+-                          g_variant_new ("(s)", ND_WFD_ZONE),
+-                          G_VARIANT_TYPE ("(" ZONE_TYPE ")"),
++                          FIREWALLD_NAME ".zone",
++                          "getZones",
++                          NULL,
++                          G_VARIANT_TYPE ("(as)"),
+                           G_DBUS_CALL_FLAGS_NONE, /* We do not allow password prompting here. */
+                           500,
+                           cancellable,
+-                          get_zone_settings_cb,
++                          get_zones_cb,
+                           g_steal_pointer (&task));
+ }
+ 
