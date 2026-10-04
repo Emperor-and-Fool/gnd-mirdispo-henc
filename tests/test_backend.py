@@ -111,6 +111,10 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(backend.status, "connecting")
         self.assertEqual(backend._stream_unit, "knd-test.service")
         self.assertEqual(discovery.started_uuid, "/peer/1")
+        # The two ends agree on a group over the same channels the search
+        # sweeps, so the search stops as soon as one is being reached rather
+        # than once a picture arrives, which it never would otherwise.
+        self.assertEqual(discovery.discover_calls, [False])
 
     def test_connect_uses_the_clicked_display_after_the_list_changes(self):
         """A display that disappears must not hand the click to its neighbour.
@@ -542,11 +546,14 @@ class HelperStateTests(unittest.TestCase):
         discovery.helper_state = "streaming"
         backend._poll_displays()
         self.assertEqual(discovery.discover_calls, [False])
+        # A drop puts the backend back to reaching for the receiver, which
+        # needs the radio as much as sending does, so the search stays off
+        # rather than resuming between the two.
         backend._handle_dropped_stream(connected=True)
-        self.assertEqual(discovery.discover_calls, [False, True])
+        self.assertEqual(discovery.discover_calls, [False])
         backend._poll_displays()
         backend.disconnect()
-        self.assertEqual(discovery.discover_calls, [False, True, False, True])
+        self.assertEqual(discovery.discover_calls, [False, True])
 
     def test_quitting_idle_stops_the_engine_but_not_a_cast(self):
         discovery, backend = self.make()

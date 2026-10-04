@@ -134,10 +134,14 @@ class DisplayBackend(QObject):
         return legal.source_location()
 
     def _set_status(self, status: str, text: str):
-        # Search for receivers only while not sending a picture: the search
-        # scans other channels on the radio the stream uses. It resumes as
-        # soon as a link drops, so the receiver can be found again.
-        discover = status != "streaming"
+        # Search for receivers only while neither reaching a receiver nor
+        # sending a picture: the search scans other channels on the radio the
+        # link uses. Reaching one needs the radio at least as much as sending
+        # does, since the two ends agree on a group over the same channels the
+        # search sweeps, and a search that kept running until a picture
+        # arrived would stop the picture from ever arriving. It resumes as
+        # soon as a link drops or fails, so the receiver can be found again.
+        discover = status not in ("connecting", "streaming")
         if not self._demo and self._service is not None and discover != self._discovering:
             self._discovering = discover
             setter = getattr(self._service, "set_discover", None)
