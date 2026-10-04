@@ -1,0 +1,204 @@
+From: Mirdispo contributors
+Subject: Mend a measurement that could not mean what it said
+
+Four things, all found by reading back over what was built in a hurry.
+
+A line claimed to say how many frames carried a picture and how many only
+said that nothing had changed, deciding by their size. That holds where an
+encoder spends what a frame needs. It does not hold at all where the encoder
+is told to hold a rate, because a held rate is held by padding a frame that
+needed nothing up to the size of one that needed everything. Every frame
+measured the same, and the line reported that all of them carried a picture
+whether or not any of them did. It was believed for an evening. The sizes are
+reported without the claim, and the smallest frame in each ten seconds is
+given, which is where the question can actually be looked at.
+
+How far behind a frame may fall before later ones are dropped was written in
+milliseconds. The same milliseconds are a different number of frames at a
+different rate, so the rule quietly tightened or loosened as the rate changed,
+which nobody chose. It is counted in frames and turned into time once the
+rate is known.
+
+One encoder was given the same setting twice in the same call, with different
+values. The second won and the first was never doing anything, which is only
+a problem for whoever reads the file and believes the first one.
+
+And the numbers the software encoder is held to were left unexplained, which
+made them look stale rather than specific. They were measured on a group
+sharing the lower band with the station connection on one radio: four
+megabits dropped nothing but left the picture thin, six held two minutes,
+eight came apart inside one, and five is where it settled. That is written
+down now, because a machine with no upper band to move to has no other way to
+find it.
+
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -38,6 +38,7 @@
+    * to catch up. Frames are only sent once the pipeline latency has passed,
+    * so a frame within that is still on time. */
+   GstClockTime     budget;
++  guint            budget_frames;
+ 
+   /* What was captured and what was encoded, to report dropped frames. */
+   gint             frames_in;
+@@ -50,7 +51,7 @@
+    * it: both are the same number of frames, and only one of them is
+    * anything to see. */
+   guint64          bytes_out;
+-  guint            frames_unchanged;
++  gsize            smallest_frame;
+ 
+   /* How far apart frames are, rather than how many there were. A count over
+    * ten seconds is the same whether the frames in it were evenly spaced or
+@@ -68,11 +69,6 @@
+ 
+ #define WFD_QOS_REPORT_INTERVAL (10 * GST_SECOND)
+ 
+-/* Above this a frame is carrying a picture; below it, it is saying that the
+- * one before it still stands. Real frames run to tens of kilobytes even on a
+- * quiet desktop. */
+-#define WFD_QOS_UNCHANGED_BYTES 1024
+-
+ enum {
+   SIGNAL_CREATE_SOURCE,
+   SIGNAL_CREATE_AUDIO_SOURCE,
+@@ -140,8 +136,8 @@
+         gsize encoded = gst_buffer_get_size (buf);
+ 
+         qos_data->bytes_out += encoded;
+-        if (encoded < WFD_QOS_UNCHANGED_BYTES)
+-          qos_data->frames_unchanged++;
++        if (qos_data->smallest_frame == 0 || encoded < qos_data->smallest_frame)
++          qos_data->smallest_frame = encoded;
+       }
+ 
+       if (qos_data->prev_pts != GST_CLOCK_TIME_NONE && buf->pts > qos_data->prev_pts)
+@@ -166,7 +162,7 @@
+           g_atomic_int_set (&qos_data->frames_in, 1);
+           qos_data->frames_out = 1;
+           qos_data->bytes_out = 0;
+-          qos_data->frames_unchanged = 0;
++          qos_data->smallest_frame = 0;
+           qos_data->gaps = 0;
+           qos_data->gap_total = 0;
+           qos_data->gap_max = 0;
+@@ -189,14 +185,21 @@
+                      captured / (gdouble) seconds,
+                      qos_data->frames_out / (gdouble) seconds);
+ 
+-          /* A rate that is really being produced from one that is only being
+-           * padded out to look like it. */
++          /* How big the frames were, and how small the smallest was.
++           *
++           * This once claimed to say how many frames carried a picture and
++           * how many only said that nothing had changed, by their size. That
++           * holds where the encoder spends what a frame needs, and not at all
++           * where it is told to hold a rate: a held rate is held by padding a
++           * frame that needed nothing up to the size of one that needed
++           * everything, so every frame measured the same and the line said
++           * all of them carried a picture whether or not any of them did. It
++           * was believed for an evening. The sizes are reported without the
++           * claim, and the smallest one is where to look. */
+           if (qos_data->frames_out > 0)
+-            g_message ("WfdMediaFactory: %u of them carried a picture (%.1f a second), %u said nothing had changed, %.0f kB each",
+-                       qos_data->frames_out - qos_data->frames_unchanged,
+-                       (qos_data->frames_out - qos_data->frames_unchanged) / (gdouble) seconds,
+-                       qos_data->frames_unchanged,
+-                       qos_data->bytes_out / 1024.0 / qos_data->frames_out);
++            g_message ("WfdMediaFactory: frames averaged %.0f kB, the smallest %.0f kB",
++                       qos_data->bytes_out / 1024.0 / qos_data->frames_out,
++                       qos_data->smallest_frame / 1024.0);
+ 
+           /* Evenly spaced or not. A picture that is sharp and moves badly is
+            * one whose frames are the right number and at the wrong moments. */
+@@ -213,7 +216,7 @@
+ 
+           qos_data->frames_out = 0;
+           qos_data->bytes_out = 0;
+-          qos_data->frames_unchanged = 0;
++          qos_data->smallest_frame = 0;
+           qos_data->gaps = 0;
+           qos_data->gap_total = 0;
+           qos_data->gap_max = 0;
+@@ -506,15 +509,24 @@
+   success &= gst_bin_add (bin, encoding_perf);
+   qos_data = g_new0 (QOSData, 1);
+   qos_data->prev_pts = GST_CLOCK_TIME_NONE;
+-  /* x264 runs with zero latency tuning and a short pipeline latency, and a
++  /* How far behind a frame may fall before later ones are dropped to catch
++   * up, counted in frames rather than in milliseconds. The same number of
++   * milliseconds is a different number of frames at a different rate, so a
++   * figure in time quietly becomes a stricter or a looser rule as the rate
++   * changes, which is not something anyone chose. Three frames behind is
++   * three frames behind whatever the rate. The real figure is set once the
++   * rate is known; this is what it comes to at thirty a second.
++   *
++   * x264 runs with zero latency tuning and a short pipeline latency, and a
+    * frame that is late at the sink is still sent at once, so dropping is
+-   * kept for frames far behind. The other encoders keep the 50 ms they had. */
++   * kept for frames far behind. The other encoders keep the shorter budget
++   * they had. */
+   if (wfd_media_factory_profiles[self->factory_profile].video_encoder == ELEMENT_X264 ||
+       wfd_media_factory_profiles[self->factory_profile].video_encoder == ELEMENT_NVH264 ||
+       wfd_media_factory_profiles[self->factory_profile].video_encoder == ELEMENT_VAH264LP)
+-    qos_data->budget = 100 * GST_MSECOND;
++    qos_data->budget_frames = 3;
+   else
+-    qos_data->budget = 50 * GST_MSECOND;
++    qos_data->budget_frames = 2;
+   g_object_set_data_full (G_OBJECT (encoding_perf), "wfd-qos-data", qos_data, (GDestroyNotify) free_qos_data);
+   source_src = gst_element_get_static_pad (source, "src");
+   if (source_src)
+@@ -874,6 +886,19 @@
+   if (params->idr_request_capability && !(quirks & WFD_QUIRK_NO_IDR))
+     gop_size = 10 * resolution->refresh_rate;
+ 
++  /* How far behind a frame may fall, in frames, now that the rate is known. */
++  {
++    g_autoptr(GstElement) encoding_perf = gst_bin_get_by_name (bin, "wfd-measure-encoder-realtime");
++
++    if (encoding_perf != NULL)
++      {
++        QOSData *qos_data = g_object_get_data (G_OBJECT (encoding_perf), "wfd-qos-data");
++
++        if (qos_data != NULL && qos_data->budget_frames > 0)
++          qos_data->budget = qos_data->budget_frames * GST_SECOND / resolution->refresh_rate;
++      }
++  }
++
+   /* The rate agreed with this receiver, now that it is known. */
+   videorate = gst_bin_get_by_name (bin, "wfd-videorate");
+   if (videorate != NULL)
+@@ -964,7 +989,6 @@
+                     "pass", 0,
+                     "tune", 0x4, /* zero latency */
+                     "speed-preset", 1, /* ultrafast */
+-                    "rc-lookahead", 1,
+                     /* Up to four slices, each encoded by its own thread.
+                      * Sliced threading adds no frame of delay, unlike frame
+                      * threading, and cuts the time a frame takes to encode.
+diff -ruN a/src/wfd/wfd-media-factory.h b/src/wfd/wfd-media-factory.h
+--- a/src/wfd/wfd-media-factory.h
++++ b/src/wfd/wfd-media-factory.h
+@@ -153,8 +153,18 @@
+ } WfdEncoderTuning;
+ 
+ static const WfdEncoderTuning wfd_encoder_tuning[ELEMENT_NONE + 1] = {
+-  /* Found by watching this encoder on a link that was breaking up: the rate
+-   * it kept and the buffer that let a hard frame through without bursting. */
++  /* Measured at 1280x720 and 30 Hz on a Wi-Fi Direct group sharing the lower
++   * band with the station connection on the same radio, which is what a
++   * machine with one radio and no upper band to move to has. The ceiling was
++   * found by walking it: four megabits ran without dropping a frame but left
++   * the picture thin, six held for about two minutes before dropping between
++   * six and twenty frames in every hundred, and eight came apart inside a
++   * minute. Five is where it settled, with the rate held steady rather than
++   * left to follow the picture, and a buffer of two frames.
++   *
++   * These are not the numbers for a quiet band, and they are not meant to be.
++   * They are the ones that work where there is no room, which is the case
++   * that has no other way of finding them. */
+   [ELEMENT_X264]      = { .bitrate_kbit = 5 * 1024, .vbv_frames = 2 },
+ 
+   /* Found on a link with room to spare: a radio of its own in the upper band,

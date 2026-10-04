@@ -1,41 +1,26 @@
 From: Mirdispo contributors
-Subject: Testing: hold the link at 720p30 and a steady rate
+Subject: Hold the rate steady rather than letting the picture decide it
 
-Not a patch to keep. It fixes the format of every link so that one question
-can be answered: whether what breaks up a cast here is the size of the
-picture, the room the link has for it, or the way the rate rises and falls.
-Nothing can be chosen sensibly, by a person or by the code, until it is known
-which of those is doing the damage.
+This began as a probe. The format of every link was held still at once -
+1280x720 at 30 Hz, a few megabits, and a rate held steady - so that one
+question could be answered: whether what broke a cast was the size of the
+picture, the room the link had for it, or the way the rate rose and fell with
+how hard the picture was.
 
-Three things are held still at once, which is the point rather than a flaw.
-Separating them matters when a fix is designed; what is wanted first is to
-know whether the format is where the trouble lives at all.
+Two of the three turned out not to be the cause, and were given back: the
+mode is chosen again from what the receiver offers and what is being shared,
+and the rate is set per encoder from what each was measured carrying. What
+broke the cast was a group sharing the lower band with the station connection
+on the same radio.
 
-The mode becomes 1280x720 at 30 Hz whenever the receiver announces it. A
-receiver that announces 720p at 60 Hz announces it at 30 Hz too, and a source
-may send the slower of the two. A receiver that announces no 720p at 30 Hz is
-left to choose as before, and says so in the log.
+The third is kept, on its own merits. The encoder was asking for a constant
+quality, which means the rate follows the content: a still page costs little
+and a moving one costs whatever it costs, in bursts a shared radio will not
+carry. Upstream asked for a constant quantiser and called it constant bitrate
+in the comment beside it, which is how a scrolling page came out at 25 Mbit/s.
+A held rate is what a link sharing its radio can plan around, and every
+measurement since has been made on top of it.
 
-The picture is held at 5 Mbit/s rather than 10, a figure being moved between
-runs to find where the link stops carrying what is asked of it. At 720p that
-is a far larger share per pixel than 10 Mbit/s ever was at 1080p.
-
-The rate is held steady rather than allowed to rise and fall with how hard
-the picture is: x264's pass becomes constant bitrate instead of constant
-quality. A radio that already divides its time between a group and a station
-is said to carry a steady rate where it drops a bursty one. The other encoder
-already sends a held rate, so nothing about it changes.
-
-Each of the three says in the log what it did, so a session can be read back
-without guessing which of them was in force.
-
-
-The buffer the rate control works against is widened from 50 ms to 67 ms,
-which at 30 Hz is two frames rather than one and a half. A frame that is
-hard to encode can then borrow from one neighbour instead of being crushed
-to fit, which is what makes the picture lurch in sharpness under a held rate.
-It is still nine times tighter than the encoder sets by default, so what is
-sent stays close to what the link can take at once.
 diff -ruN a/src/wfd/wfd-client.c b/src/wfd/wfd-client.c
 --- a/src/wfd/wfd-client.c
 +++ b/src/wfd/wfd-client.c
