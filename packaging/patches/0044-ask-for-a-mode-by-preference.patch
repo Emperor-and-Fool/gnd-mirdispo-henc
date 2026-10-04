@@ -1,0 +1,82 @@
+From: Mirdispo contributors
+Subject: Ask for a mode by preference before weighing the list
+
+A mode is chosen by how much of the shared picture it shows, and between two
+that show it equally well, by which is larger. That answers for detail and
+says nothing about motion. A receiver offering both 1920x1080 at 30 Hz and
+1280x720 at 60 Hz is asked for the first because it is the larger picture,
+and the second is never weighed at all, however little of what is being
+shared is standing still.
+
+Which of the two is wanted is not something the numbers decide. Half the
+pixels at twice the rate is the same work either way, and on this link the
+same bitrate comes to slightly more per pixel at the smaller size, so
+neither is the careful choice and the larger one is not the safe default it
+looks like.
+
+Modes can now be named, in order, and are asked for ahead of the weighing. A
+receiver that offers none of them is chosen for exactly as before, so naming
+a preference costs nothing where it cannot be met, and the one named is said
+in the log so a session shows which way it went.
+
+One mode is named: 1280x720 at 60 Hz.
+
+diff -ruN a/src/wfd/wfd-client.c b/src/wfd/wfd-client.c
+--- a/src/wfd/wfd-client.c
++++ b/src/wfd/wfd-client.c
+@@ -239,6 +239,28 @@
+  * resynchronise for, which showed as the picture flashing. A receiver that
+  * offers CEA modes is saying which timings it is made for.
+  */
++/* Modes to ask a receiver for before weighing its whole list.
++ *
++ * What is weighed otherwise is how much of the shared picture a mode shows,
++ * and between two modes that show it equally well, the larger. That answers
++ * for detail and says nothing about motion: a receiver offering both
++ * 1920x1080 at 30 Hz and 1280x720 at 60 Hz is asked for the first, because
++ * it is the larger picture, and the second is never considered however
++ * little of it is standing still.
++ *
++ * A mode named here is taken when the receiver offers it, in the order
++ * written. A receiver offering none of them is chosen for as before, so a
++ * preference costs nothing where it cannot be met.
++ */
++static const struct
++{
++  gint width;
++  gint height;
++  gint refresh_rate;
++} wfd_preferred_modes[] = {
++  { 1280, 720, 60 },
++};
++
+ static WfdResolution *
+ wfd_client_best_mode (WfdVideoCodec *codec, gint width, gint height)
+ {
+@@ -246,6 +268,26 @@
+   g_autoptr(GList) all = wfd_video_codec_get_resolutions (codec);
+   WfdResolution *best = NULL;
+ 
++  for (gsize i = 0; i < G_N_ELEMENTS (wfd_preferred_modes); i++)
++    {
++      for (GList *item = all; item; item = item->next)
++        {
++          WfdResolution *candidate = (WfdResolution *) item->data;
++
++          if (candidate->interlaced)
++            continue;
++
++          if (candidate->width == wfd_preferred_modes[i].width &&
++              candidate->height == wfd_preferred_modes[i].height &&
++              candidate->refresh_rate == wfd_preferred_modes[i].refresh_rate)
++            {
++              g_message ("WfdClient: The receiver offers %ix%i@%i, which is asked for ahead of its own best.",
++                         candidate->width, candidate->height, candidate->refresh_rate);
++              return candidate;
++            }
++        }
++    }
++
+   preferred = wfd_video_codec_get_resolutions_cea (codec);
+   best = wfd_client_pick_resolution (preferred, width, height);
+ 

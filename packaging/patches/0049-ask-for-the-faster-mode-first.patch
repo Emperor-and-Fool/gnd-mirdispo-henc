@@ -1,0 +1,31 @@
+From: Mirdispo contributors
+Subject: Ask for the faster mode first and the larger one after
+
+The frames leaving the encoder were found to be exactly evenly spaced, to the
+tenth of a millisecond, while what arrived at the receiver still moved badly.
+Every frame sharp, every frame on time, and the movement between them wrong.
+
+Which leaves what the even spacing is sampling. Thirty frames a second taken
+at perfectly regular moments land at irregular ones in material that was not
+made at thirty: some of its frames are taken twice and some once, and that is
+seen as movement that stutters however good each picture is. The same
+material played on the machine itself looks right, because nothing is
+resampling it there.
+
+Sixty divides evenly into material made at sixty, and falls closer on
+twenty-four and twenty-five than thirty does. So the faster mode is asked for
+first, and the larger one is kept behind it for receivers that do not offer
+it. Which is wanted is a matter of what is being watched, and both are now
+written where that can be said.
+
+diff -ruN a/src/wfd/wfd-client.c b/src/wfd/wfd-client.c
+--- a/src/wfd/wfd-client.c
++++ b/src/wfd/wfd-client.c
+@@ -258,6 +258,7 @@
+   gint height;
+   gint refresh_rate;
+ } wfd_preferred_modes[] = {
++  { 1280, 720, 60 },
+   { 1920, 1080, 30 },
+ };
+ 

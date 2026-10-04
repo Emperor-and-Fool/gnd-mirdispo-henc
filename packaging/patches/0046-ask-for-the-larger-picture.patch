@@ -1,0 +1,30 @@
+From: Mirdispo contributors
+Subject: Ask for the larger picture rather than the faster one
+
+Both were watched. Twice the rate at half the size was asked for to see
+whether motion came out any smoother, and it did not look different to the
+person watching it: the material was a recording made at thirty frames a
+second, and nothing sent twice as often can put back what was never there.
+
+It is not free, either. The work done on each frame before it reaches the
+encoder is done in software, so twice as many frames is twice as much of it,
+and the processor beside the encoder was found two degrees under the point
+where it stops itself.
+
+So the larger picture is asked for, at the rate the receiver offers it. The
+preference is written out rather than left to the weighing that would arrive
+at the same mode, so that what is wanted is stated where it can be changed
+rather than inferred from how a list happens to be sorted.
+
+diff -ruN a/src/wfd/wfd-client.c b/src/wfd/wfd-client.c
+--- a/src/wfd/wfd-client.c
++++ b/src/wfd/wfd-client.c
+@@ -258,7 +258,7 @@
+   gint height;
+   gint refresh_rate;
+ } wfd_preferred_modes[] = {
+-  { 1280, 720, 60 },
++  { 1920, 1080, 30 },
+ };
+ 
+ static WfdResolution *
