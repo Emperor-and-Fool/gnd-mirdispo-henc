@@ -54,6 +54,8 @@ class DisplayBackend(QObject):
         self._status = "idle"
         self._status_text = "Ready to find nearby displays"
         self._picture_text = ""
+        self._figures = ["", "", "", "", ""]
+        self._reporting = False
         self._scanning = False
         self._selected = ""
         self._selected_id = ""
@@ -99,6 +101,37 @@ class DisplayBackend(QObject):
     @pyqtProperty(str, notify=statusChanged)
     def statusText(self):
         return self._status_text
+
+    @pyqtSlot(bool)
+    def setReporting(self, wanted: bool):
+        """Called when the figures are unfolded or folded away. Nothing is
+        totalled or sent by the engine while nobody is reading them, so the
+        asking and the showing are the same gesture."""
+        if self._reporting == wanted:
+            return
+        self._reporting = wanted
+        if not wanted:
+            self._figures = ["", "", "", "", ""]
+            self.statusChanged.emit()
+        if self._demo or self._service is None or not self._stream_unit:
+            return
+        setter = getattr(self._service, "set_stream_report", None)
+        if setter:
+            try:
+                setter(self._stream_unit, wanted)
+            except Exception:
+                pass
+
+    @pyqtProperty(bool, notify=statusChanged)
+    def reporting(self):
+        return self._reporting
+
+    @pyqtProperty(list, notify=statusChanged)
+    def figures(self):
+        """Frames a second, megabits a second, dropped altogether, dropped
+        lately, and the average gap in milliseconds. Empty strings while
+        nothing has been reported."""
+        return self._figures
 
     @pyqtProperty(str, notify=statusChanged)
     def pictureText(self):
@@ -229,6 +262,13 @@ class DisplayBackend(QObject):
                     if (picture or "") != self._picture_text:
                         self._picture_text = picture or ""
                         self.statusChanged.emit()
+                    if self._reporting:
+                        reader = getattr(self._service, "stream_figures", None)
+                        figures = reader(self._stream_unit) if reader else None
+                        parts = (figures or "").split("|")
+                        if len(parts) == 5 and parts != self._figures:
+                            self._figures = parts
+                            self.statusChanged.emit()
                     if helper_state == "ended":
                         # Stopped from the desktop, such as Plasma's screen
                         # sharing indicator. Reconnecting would share the

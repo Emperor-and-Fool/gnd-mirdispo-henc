@@ -137,11 +137,59 @@ Kirigami.ApplicationWindow {
                                 Layout.fillWidth: true
                             }
                             Controls.Label {
-                                text: displayBackend.pictureText
-                                visible: text !== ""
+                                id: pictureLine
+                                // The line is the control: a separate button would widen
+                                // this column and carry the action button out of the one
+                                // column every card's button shares.
+                                property bool open: false
+                                visible: displayBackend.pictureText !== ""
+                                text: (open ? "\u25BE  " : "\u25B8  ") + displayBackend.pictureText
                                 opacity: 0.6
                                 elide: Text.ElideRight
                                 Layout.fillWidth: true
+                                TapHandler {
+                                    onTapped: {
+                                        pictureLine.open = !pictureLine.open
+                                        displayBackend.setReporting(pictureLine.open)
+                                    }
+                                }
+                            }
+                            ColumnLayout {
+                                visible: pictureLine.open && pictureLine.visible
+                                spacing: 0
+                                Layout.topMargin: Kirigami.Units.smallSpacing
+                                Layout.fillWidth: true
+
+                                Repeater {
+                                    model: [
+                                        { caption: "Sending",  slot: 0, unit: " fps" },
+                                        { caption: "Carrying", slot: 1, unit: " Mbit/s" },
+                                        { caption: "Dropped",  slot: 2, unit: "" },
+                                        { caption: "Lately",   slot: 3, unit: "" },
+                                        { caption: "Spacing",  slot: 4, unit: " ms" }
+                                    ]
+                                    delegate: RowLayout {
+                                        required property var modelData
+                                        spacing: Kirigami.Units.largeSpacing
+                                        Controls.Label {
+                                            text: modelData.caption
+                                            opacity: 0.6
+                                            Layout.preferredWidth: Kirigami.Units.gridUnit * 4
+                                        }
+                                        Controls.Label {
+                                            // Proportional digits make a changing number shuffle
+                                            // sideways on every update. A fixed width and even
+                                            // digits keep the column still when 9.9 becomes 10.1.
+                                            text: displayBackend
+                                                  ? (displayBackend.figures[modelData.slot] || "\u2014") + modelData.unit
+                                                  : "\u2014"
+                                            font.family: "monospace"
+                                            horizontalAlignment: Text.AlignRight
+                                            opacity: 0.75
+                                            Layout.preferredWidth: Kirigami.Units.gridUnit * 6
+                                        }
+                                    }
+                                }
                             }
                         }
                         Controls.Button {

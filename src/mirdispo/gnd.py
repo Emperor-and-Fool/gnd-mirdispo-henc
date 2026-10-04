@@ -191,6 +191,45 @@ class GnomeNetworkDisplaysService:
         manager, _ = self._dbus()
         manager.StopStream(unit_name)
 
+    def set_stream_report(self, unit_name: str, wanted: bool) -> None:
+        """Ask a running helper to publish its figures, or to stop. Totalling
+        and sending them costs a little every second, so it is not asked for
+        until somebody is reading them."""
+        import dbus
+
+        name = stream_bus_name(unit_name)
+        if not name:
+            return
+        try:
+            if not self._name_has_owner(name):
+                return
+            actions = dbus.Interface(self.bus.get_object(name, "/" + name.replace(".", "/")),
+                                     "org.gtk.Actions")
+            actions.Activate("report", [dbus.Boolean(wanted)], {})
+        except Exception:
+            pass
+
+    def stream_figures(self, unit_name: str) -> str | None:
+        """What the cast is doing now, as the helper publishes it: frames a
+        second, megabits a second, dropped altogether, dropped lately, and the
+        average gap in milliseconds, separated by bars. None while reporting
+        is off or nothing has been totalled yet."""
+        import dbus
+
+        name = stream_bus_name(unit_name)
+        if not name:
+            return None
+        try:
+            if not self._name_has_owner(name):
+                return None
+            actions = dbus.Interface(self.bus.get_object(name, "/" + name.replace(".", "/")),
+                                     "org.gtk.Actions")
+            _enabled, _parameter, state = actions.Describe("figures")
+            figures = str(state[0]) if state else ""
+            return figures or None
+        except Exception:
+            return None
+
     def stream_picture(self, unit_name: str) -> str | None:
         """What the helper settled on with the receiver: the size of the
         picture, how often it is sent, what the rate is held to and which

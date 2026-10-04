@@ -1,0 +1,218 @@
+From: Mirdispo contributors
+Subject: Report what a cast is doing, while somebody is reading it
+
+What a cast is doing is totalled every ten seconds and written to the log.
+That is the right span for a line to be found afterwards and the wrong one
+for a figure on a screen: a number that changes six times a minute sits still
+long enough to look broken.
+
+The same frames are totalled again over about a second, and published beside
+the state and the picture the engine already publishes: frames a second,
+megabits a second, frames dropped altogether, frames dropped lately, and the
+average gap between them. The ten-second summary in the log is unchanged, so
+nothing that was being read afterwards stops being readable.
+
+Totalling and sending them costs a little, every second, for as long as a
+cast runs. That is worth paying while somebody is reading them and worth
+nothing at all otherwise, so it is not paid until asked for: the client turns
+reporting on and off, and nothing is published while it is off.
+
+That switch is also the first thing a client can tell a running cast to do.
+Until now a cast could only be set up before it started and stopped
+afterwards. Anything that must be changed while it runs - and an override of
+a decision the engine is making badly is the obvious one - now has a way to
+be said.
+
+diff -ruN a/src/stream/nd-stream.c b/src/stream/nd-stream.c
+--- a/src/stream/nd-stream.c
++++ b/src/stream/nd-stream.c
+@@ -52,6 +52,9 @@
+   NdSink                *sink;
+   GSimpleAction         *state_action;
+   GSimpleAction         *picture_action;
++  GSimpleAction         *report_action;
++  GSimpleAction         *figures_action;
++  guint                  report_source_id;
+   gboolean               ended_by_user;
+ };
+ 
+@@ -394,6 +397,48 @@
+   g_clear_object (&self->state_action);
+ }
+ 
++/* Reading the figures and handing them on, once a second, for as long as
++ * somebody is looking at them. */
++static gboolean
++nd_stream_report_figures_cb (gpointer user_data)
++{
++  NdStream *self = ND_STREAM (user_data);
++  const gchar *figures = wfd_media_factory_get_figures ();
++
++  if (figures != NULL && self->figures_action)
++    g_simple_action_set_state (self->figures_action, g_variant_new_string (figures));
++
++  return G_SOURCE_CONTINUE;
++}
++
++/* Totalling and publishing figures costs a little, every second, forever.
++ * It is worth that while a person is reading them and worth nothing at all
++ * when the part of the window showing them is folded away, so the client
++ * says which it is and nothing is spent until it asks. */
++static void
++nd_stream_report_change_state_cb (GSimpleAction *action,
++                                  GVariant      *value,
++                                  gpointer       user_data)
++{
++  NdStream *self = ND_STREAM (user_data);
++  gboolean wanted = g_variant_get_boolean (value);
++
++  g_simple_action_set_state (action, value);
++
++  if (wanted && self->report_source_id == 0)
++    {
++      g_debug ("NdStream: Reporting figures");
++      self->report_source_id = g_timeout_add_seconds (1, nd_stream_report_figures_cb, self);
++    }
++  else if (!wanted && self->report_source_id != 0)
++    {
++      g_debug ("NdStream: No longer reporting figures");
++      g_clear_handle_id (&self->report_source_id, g_source_remove);
++      if (self->figures_action)
++        g_simple_action_set_state (self->figures_action, g_variant_new_string (""));
++    }
++}
++
+ static void
+ nd_stream_startup (GApplication *app)
+ {
+@@ -409,6 +454,18 @@
+                                                        g_variant_new_string (""));
+   g_action_map_add_action (G_ACTION_MAP (app), G_ACTION (self->picture_action));
+ 
++  /* Said by whoever is reading them, so that nothing is totalled and nothing
++   * is sent while the figures are folded away. */
++  self->report_action = g_simple_action_new_stateful ("report", G_VARIANT_TYPE_BOOLEAN,
++                                                      g_variant_new_boolean (FALSE));
++  g_signal_connect (self->report_action, "change-state",
++                    G_CALLBACK (nd_stream_report_change_state_cb), self);
++  g_action_map_add_action (G_ACTION_MAP (app), G_ACTION (self->report_action));
++
++  self->figures_action = g_simple_action_new_stateful ("figures", NULL,
++                                                       g_variant_new_string (""));
++  g_action_map_add_action (G_ACTION_MAP (app), G_ACTION (self->figures_action));
++
+   g_debug ("NdStream: Startup");
+   /* Run indefinitely, until told to exit. */
+   g_application_hold (app);
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -75,6 +75,34 @@
+  * written to the log, where nobody watching a television is looking. */
+ static gchar *wfd_picture_description = NULL;
+ 
++/* What the cast is doing at this moment, kept apart from the ten-second
++ * summary written to the log. A figure anyone is watching has to move at a
++ * pace they can read: ten seconds is right for a line to be found afterwards
++ * and far too slow for a number on screen, which would sit still long enough
++ * to look broken. These are totalled over a second instead, and the summary
++ * in the log is unchanged. */
++typedef struct
++{
++  GstClockTime  since;
++  guint         frames;
++  guint64       bytes;
++  guint         dropped_now;
++  guint         dropped_total;
++  GstClockTime  gap_total;
++  guint         gaps;
++} WfdLiveFigures;
++
++static WfdLiveFigures wfd_live = { 0 };
++static gchar *wfd_live_description = NULL;
++
++#define WFD_LIVE_INTERVAL GST_SECOND
++
++const gchar *
++wfd_media_factory_get_figures (void)
++{
++  return wfd_live_description;
++}
++
+ const gchar *
+ wfd_media_factory_get_picture (void)
+ {
+@@ -163,9 +191,39 @@
+ 
+           qos_data->gap_total += gap;
+           qos_data->gaps++;
++
++          wfd_live.gap_total += gap;
++          wfd_live.gaps++;
+         }
+       qos_data->prev_pts = buf->pts;
+ 
++      /* The same frame, totalled again over a shorter span for whoever is
++       * watching rather than reading. */
++      wfd_live.frames++;
++      wfd_live.bytes += gst_buffer_get_size (buf);
++      if (wfd_live.since == 0)
++        wfd_live.since = now;
++      else if (now - wfd_live.since >= WFD_LIVE_INTERVAL)
++        {
++          gdouble span = (now - wfd_live.since) / (gdouble) GST_SECOND;
++
++          g_clear_pointer (&wfd_live_description, g_free);
++          wfd_live_description =
++            g_strdup_printf ("%.1f|%.1f|%u|%u|%.1f",
++                             wfd_live.frames / span,
++                             wfd_live.bytes * 8.0 / span / 1000000.0,
++                             wfd_live.dropped_total,
++                             wfd_live.dropped_now,
++                             wfd_live.gaps ? wfd_live.gap_total / (gdouble) wfd_live.gaps / GST_MSECOND : 0.0);
++
++          wfd_live.since = now;
++          wfd_live.frames = 0;
++          wfd_live.bytes = 0;
++          wfd_live.dropped_now = 0;
++          wfd_live.gap_total = 0;
++          wfd_live.gaps = 0;
++        }
++
+       qos_data->frames_out++;
+       if (qos_data->report_at == 0)
+         {
+@@ -223,8 +281,15 @@
+ 
+           /* A couple of frames are always on their way through. */
+           if (captured > (gint) qos_data->frames_out + 2)
+-            g_message ("WfdMediaFactory: %d of %d frames in the last %d s were dropped to keep up",
+-                       captured - (gint) qos_data->frames_out, captured, seconds);
++            {
++              guint dropped = captured - qos_data->frames_out;
++
++              g_message ("WfdMediaFactory: %d of %d frames in the last %d s were dropped to keep up",
++                         captured - (gint) qos_data->frames_out, captured, seconds);
++
++              wfd_live.dropped_now += dropped;
++              wfd_live.dropped_total += dropped;
++            }
+ 
+           qos_data->frames_out = 0;
+           qos_data->bytes_out = 0;
+diff -ruN a/src/wfd/wfd-media-factory.h b/src/wfd/wfd-media-factory.h
+--- a/src/wfd/wfd-media-factory.h
++++ b/src/wfd/wfd-media-factory.h
+@@ -218,6 +218,12 @@
+  * often it is sent, what it is held to, and which encoder is doing it. NULL
+  * until a receiver has been negotiated with. */
+ const gchar * wfd_media_factory_get_picture (void);
++
++/* What the cast is doing now, totalled over about a second: frames a second,
++ * megabits a second, frames dropped altogether, frames dropped lately, and
++ * the average gap between frames in milliseconds, separated by bars. NULL
++ * until a second has passed. */
++const gchar * wfd_media_factory_get_figures (void);
+ void wfd_media_factory_finalize (GObject *object);
+ 
+ G_END_DECLS
