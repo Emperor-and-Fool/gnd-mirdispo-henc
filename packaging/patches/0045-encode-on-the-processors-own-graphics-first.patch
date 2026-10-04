@@ -1,0 +1,155 @@
+From: Mirdispo contributors
+Subject: Encode on the processor's own graphics first
+
+A laptop has one set of fans for both of its graphics devices. Encoding on
+the card costs nothing in processor time, which is what it was put there for,
+but waking it draws about fifteen watts that leave through the same vents as
+everything else. A cast running that way was measured with the processor six
+degrees under the point where it stops itself, and the card idling at seven
+percent of what it can do.
+
+The part built into the processor is already awake and already inside that
+budget. It is the one meant for this work, and at this size the work is
+little for it either way.
+
+It could not hold a rate until recently, which is why it is only reachable
+now. These processors leave the firmware that lets it do so unloaded by
+default, and without it the encoder offers a constant quantiser and nothing
+else. A constant quantiser is what a cast here already came apart under: the
+rate follows how hard the picture is, and a Wi-Fi link does not carry what
+that asks of it. With i915.enable_guc=2 the firmware is loaded and the
+encoder holds a rate, which is what everything else here is built on.
+
+It is tried before the card, because what it saves is paid for every minute
+a cast runs while what it risks is paid once if at all. The risk is the one
+recorded below: this encoder is reached through the library whose teardown
+aborted a cast for someone once. That is the thing to watch when a cast is
+stopped, and should it happen, this belongs below the card for the same
+reason and by the same four lines.
+
+A picture is cut into as many pieces as the receiver said it takes, a frame
+waits for nothing after it and looks back only at the frame before, and the
+rate and the buffer are the ones the card was left on, so what differs
+between the two is the encoder rather than the numbers.
+
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -6,6 +6,7 @@
+   [ELEMENT_OPENH264] = "openh264enc",
+   [ELEMENT_X264] = "x264enc",
+   [ELEMENT_NVH264] = "nvh264enc",
++  [ELEMENT_VAH264LP] = "vah264lpenc",
+   [ELEMENT_VAH264] = "vah264enc",
+   [ELEMENT_VAAPIH264] = "vaapih264enc",
+   [ELEMENT_VIDEO_NONE] = NULL,
+@@ -334,6 +335,18 @@
+        *  - rate-control: 2, buffer*/
+       break;
+ 
++    case ELEMENT_VAH264LP:
++      encoder = gst_element_factory_make ("vah264lpenc", "wfd-encoder");
++      encoder_elem = encoder;
++      success &= gst_bin_add (bin, encoder);
++      g_object_set (encoder,
++                    /* A frame may not wait for one that comes after it, and
++                     * may look back only at the one before it. */
++                    "b-frames", (guint) 0,
++                    "ref-frames", (guint) 1,
++                    NULL);
++      break;
++
+     case ELEMENT_NVH264:
+       encoder = gst_element_factory_make ("nvh264enc", "wfd-encoder");
+       encoder_elem = encoder;
+@@ -437,7 +450,8 @@
+    * frame that is late at the sink is still sent at once, so dropping is
+    * kept for frames far behind. The other encoders keep the 50 ms they had. */
+   if (wfd_media_factory_profiles[self->factory_profile].video_encoder == ELEMENT_X264 ||
+-      wfd_media_factory_profiles[self->factory_profile].video_encoder == ELEMENT_NVH264)
++      wfd_media_factory_profiles[self->factory_profile].video_encoder == ELEMENT_NVH264 ||
++      wfd_media_factory_profiles[self->factory_profile].video_encoder == ELEMENT_VAH264LP)
+     qos_data->budget = 100 * GST_MSECOND;
+   else
+     qos_data->budget = 50 * GST_MSECOND;
+@@ -903,6 +917,29 @@
+                     NULL);
+       break;
+ 
++    case ELEMENT_VAH264LP:
++      if (codec->profile == WFD_H264_PROFILE_HIGH)
++        profile = WFD_H264_PROFILE_HIGH;
++      else
++        profile = WFD_H264_PROFILE_BASE;
++
++      g_object_set (encoder,
++                    "rate-control", 2, /* constant bitrate */
++                    "bitrate", (guint) bitrate_kbit,
++                    "key-int-max", (guint) gop_size,
++                    /* A picture is cut into as many pieces as the receiver
++                     * said it takes. */
++                    "num-slices", (guint) CLAMP (codec->max_slice_num, 1, 200),
++                    NULL);
++
++      /* The buffer the rate control answers to, which this encoder takes in
++       * kilobits. Left to its own reckoning when nothing was measured. */
++      if (vbv_kbit > 0)
++        g_object_set (encoder, "cpb-size", vbv_kbit, NULL);
++
++      g_message ("WfdMediaFactory: Encoding on the processor's own graphics.");
++      break;
++
+     case ELEMENT_NVH264:
+       if (codec->profile == WFD_H264_PROFILE_HIGH)
+         profile = WFD_H264_PROFILE_HIGH;
+diff -ruN a/src/wfd/wfd-media-factory.h b/src/wfd/wfd-media-factory.h
+--- a/src/wfd/wfd-media-factory.h
++++ b/src/wfd/wfd-media-factory.h
+@@ -26,6 +26,7 @@
+   ELEMENT_OPENH264,
+   ELEMENT_X264,
+   ELEMENT_NVH264,
++  ELEMENT_VAH264LP,
+   ELEMENT_VAH264,
+   ELEMENT_VAAPIH264,
+   ELEMENT_VIDEO_NONE,
+@@ -74,6 +75,28 @@
+    * none of that code: a different library, a different driver, a different
+    * vendor. If it should ever abort the way VA-API did, it belongs below
+    * software in the same way and for the same reason. */
++  /* A laptop has one set of fans for both of its graphics devices. The card
++   * does this work without noticing it, but waking it costs about fifteen
++   * watts that leave through the same vents as everything else, and the
++   * processor beside it was found six degrees under its limit while doing so.
++   * The part built into the processor is already awake, already inside that
++   * budget, and is the one meant for this.
++   *
++   * It is reached through the same library whose teardown the note below
++   * turns away from, which is the risk taken here and the thing to watch when
++   * a cast is stopped. It is tried first because what it saves is paid every
++   * minute a cast runs, while what it risks is paid once if at all; should it
++   * abort, it belongs below the card by moving four lines.
++   *
++   * This encoder could not hold a rate at all until the firmware that lets it
++   * was loaded, which is not on by default on these processors: without
++   * i915.enable_guc=2 it offers a constant quantiser and nothing else, and a
++   * constant quantiser is what this project already learned a Wi-Fi link will
++   * not carry. */
++  {PROFILE_HIGH_H264,    ELEMENT_VAH264LP,   ELEMENT_AAC_FDK,    ELEMENT_MPEGTS},
++  {PROFILE_HIGH_H264,    ELEMENT_VAH264LP,   ELEMENT_AAC_AVENC,  ELEMENT_MPEGTS},
++  {PROFILE_HIGH_H264,    ELEMENT_VAH264LP,   ELEMENT_AAC_FAAC,   ELEMENT_MPEGTS},
++  {PROFILE_HIGH_H264,    ELEMENT_VAH264LP,   ELEMENT_AUDIO_NONE, ELEMENT_MPEGTS},
+   {PROFILE_HIGH_H264,    ELEMENT_NVH264,     ELEMENT_AAC_FDK,    ELEMENT_MPEGTS},
+   {PROFILE_HIGH_H264,    ELEMENT_NVH264,     ELEMENT_AAC_AVENC,  ELEMENT_MPEGTS},
+   {PROFILE_HIGH_H264,    ELEMENT_NVH264,     ELEMENT_AAC_FAAC,   ELEMENT_MPEGTS},
+@@ -141,6 +164,10 @@
+    * twice the size needs them. */
+   [ELEMENT_NVH264]    = { .bitrate_kbit = 10 * 1024, .vbv_frames = 2 },
+ 
++  /* Started where the card was left, on the same link and the same receiver,
++   * so that what differs between them is the encoder and not the numbers. */
++  [ELEMENT_VAH264LP]  = { .bitrate_kbit = 10 * 1024, .vbv_frames = 2 },
++
+   /* Never measured. Left to the receiver's own maximum, as before. */
+   [ELEMENT_OPENH264]  = { .bitrate_kbit = 0, .vbv_frames = 0 },
+   [ELEMENT_VAH264]    = { .bitrate_kbit = 0, .vbv_frames = 0 },

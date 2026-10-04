@@ -1,0 +1,128 @@
+From: Mirdispo contributors
+Subject: Prepare the frame where it is encoded
+
+Resizing a picture and turning it into the colours an encoder wants is done
+on every frame, and it was always done in software. That was reasonable while
+the encoding was too: the frame was in the processor's memory anyway. It is
+not reasonable once the encoding happens elsewhere, because the frame is then
+carried out of the graphics after being resized only to be carried back in to
+be encoded, and both journeys are paid thirty times a second.
+
+Where the encoder is the one built into the processor's graphics, that part
+can resize and convert as well, so it does. The frame goes in once and comes
+out encoded. The capabilities between the two now say the frame stays in the
+graphics' own memory, without which the two would agree on holding it in the
+processor's memory instead and the journeys would remain.
+
+Everywhere else the software elements are kept. Handing a frame to one device
+to prepare it for a different one is not a saving, and the encoder on the
+card has memory of its own to be carried to regardless.
+
+Nothing about what is sent changes. What changes is how much of the processor
+is spent not sending it.
+
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -240,7 +240,7 @@
+   GstElement *videorate;
+   GstElement *scale;
+   GstElement *sinkfilter;
+-  GstElement *convert;
++  GstElement *convert = NULL;
+   GstElement *queue_pre_encoder;
+   GstElement *encoder;
+   GstElement *encoder_elem;
+@@ -273,11 +273,28 @@
+                 NULL);
+   success &= gst_bin_add (bin, videorate);
+ 
+-  scale = gst_element_factory_make ("videoscale", "wfd-scale");
+-  g_object_set (scale,
+-                "qos", TRUE,
+-                NULL);
+-  wfd_media_factory_parallelize (scale);
++  /* Resizing a picture and turning it into the colours an encoder wants is
++   * the same work wherever it is done, and it is done on every frame. Where
++   * the encoder is the one built into the processor's graphics, that part
++   * can do both, and the frame is then already where it is needed: it goes
++   * in once and comes out encoded, rather than being carried back and forth
++   * for each step. Everywhere else the two software elements are kept, since
++   * handing a frame to one device to prepare it for another is not a saving.
++   */
++  if (wfd_media_factory_profiles[self->factory_profile].video_encoder == ELEMENT_VAH264LP)
++    {
++      scale = gst_element_factory_make ("vapostproc", "wfd-scale");
++      convert = NULL;
++    }
++  else
++    {
++      scale = gst_element_factory_make ("videoscale", "wfd-scale");
++      g_object_set (scale,
++                    "qos", TRUE,
++                    NULL);
++      wfd_media_factory_parallelize (scale);
++    }
++
+   success &= gst_bin_add (bin, scale);
+ 
+   caps = gst_caps_new_simple ("video/x-raw",
+@@ -292,12 +309,15 @@
+                 NULL);
+   g_clear_pointer (&caps, gst_caps_unref);
+ 
+-  convert = gst_element_factory_make ("videoconvert", "wfd-videoconvert");
+-  g_object_set (convert,
+-                "qos", TRUE,
+-                NULL);
+-  wfd_media_factory_parallelize (convert);
+-  success &= gst_bin_add (bin, convert);
++  if (wfd_media_factory_profiles[self->factory_profile].video_encoder != ELEMENT_VAH264LP)
++    {
++      convert = gst_element_factory_make ("videoconvert", "wfd-videoconvert");
++      g_object_set (convert,
++                    "qos", TRUE,
++                    NULL);
++      wfd_media_factory_parallelize (convert);
++      success &= gst_bin_add (bin, convert);
++    }
+ 
+   queue_pre_encoder = gst_element_factory_make ("queue", "wfd-pre-encoder-queue");
+   g_object_set (queue_pre_encoder,
+@@ -492,7 +512,20 @@
+                 "max-size-time", 500 * GST_MSECOND,
+                 NULL);
+ 
+-  success &= gst_element_link_many (source,
++  if (convert == NULL)
++    success &= gst_element_link_many (source,
++                                      videorate,
++                                      scale,
++                                      sinkfilter,
++                                      queue_pre_encoder,
++                                      encoder,
++                                      encoding_perf,
++                                      parse,
++                                      codecfilter,
++                                      queue_mpegmux_video,
++                                      NULL);
++  else
++    success &= gst_element_link_many (source,
+                                     videorate,
+                                     scale,
+                                     sinkfilter,
+@@ -833,6 +866,14 @@
+                               "height", G_TYPE_INT, resolution->height,
+                               NULL);
+ 
++  /* Where the graphics prepare the frame and then encode it, say that the
++   * frame stays theirs. Without this the two agree on a frame held in the
++   * processor's own memory, and it is carried out of the graphics after
++   * being resized only to be carried back in to be encoded, which is the
++   * journey this is meant to avoid. */
++  if (encoder_impl == ELEMENT_VAH264LP)
++    gst_caps_set_features (caps, 0, gst_caps_features_new ("memory:VAMemory", NULL));
++
+   sinkfilter = gst_bin_get_by_name (bin, "wfd-sinkfilter");
+   g_object_set (sinkfilter,
+                 "caps", caps,
