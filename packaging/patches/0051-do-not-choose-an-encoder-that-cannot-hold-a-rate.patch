@@ -1,0 +1,143 @@
+From: Mirdispo contributors
+Subject: Do not choose an encoder that cannot hold a rate
+
+Holding the rate steady is the one thing an evening of measurement said
+decides whether a cast survives a radio it is sharing. A rate left to follow
+how hard the picture is will not cross such a link: this project already has
+the account of a scrolling page leaving at 25 Mbit/s.
+
+Not every encoder can be told to. The one built into these processors'
+graphics offers a constant quantiser and nothing else until firmware that is
+not loaded by default has been loaded, and it says which it offers only once
+it has been made, because that list is filled in from the driver rather than
+written in its source. It is tried first, being the one that costs least to
+run. On a machine where that firmware is not loaded it would be asked for a
+held rate, would quietly not give one, and would send exactly what is known
+not to arrive. That would have been shipped as an improvement.
+
+So an encoder is now asked whether it can hold a rate before it is chosen,
+and passed over if it cannot, which leaves such a machine with the software
+encoder it would have used anyway. The log says which was passed over and
+names the firmware, so the answer is a sentence rather than a bad picture.
+
+The encoders nobody here has measured were also left at the receiver's own
+maximum, which a receiver may put at fourteen megabits. On a link measured
+carrying five that is nearly three times what it takes, chosen by default on
+machines nobody here has. They are given five instead: not right for them,
+but not known to be wrong, which is the better of the two to ship.
+
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -1230,6 +1230,76 @@
+   return FALSE;
+ }
+ 
++/* Whether an encoder can be told to hold a rate.
++ *
++ * A rate that rises and falls with how hard the picture is will not cross a
++ * Wi-Fi link that is sharing its radio: this project has the account of a
++ * scrolling page coming out at 25 Mbit/s, and an evening of measurements
++ * saying that holding the rate steady is the single thing that decides
++ * whether a cast survives.
++ *
++ * Not every encoder can. The one built into these processors' graphics
++ * offers a constant quantiser and nothing else until firmware that is not
++ * loaded by default has been loaded, and it says so only once it exists:
++ * what it offers is filled in from the driver when the element is made, not
++ * written in its source. An encoder chosen without asking would be asked for
++ * a held rate, quietly not give one, and send exactly what is known not to
++ * arrive.
++ *
++ * So it is asked. An encoder that cannot hold a rate is passed over for one
++ * that can, which on such a machine means the software encoder, which is
++ * what it would have been before any of this.
++ */
++static gboolean
++wfd_gst_element_holds_a_rate (WfdGstElement element)
++{
++  g_autoptr(GstElement) probe = NULL;
++  GParamSpec *pspec;
++  GEnumClass *modes;
++
++  static gint8 holds[ELEMENT_NONE] = {0};
++
++  if (holds[element] != 0)
++    return holds[element] == 1;
++
++  probe = gst_element_factory_make (wfd_gst_elements[element], NULL);
++  if (probe == NULL)
++    {
++      holds[element] = -1;
++      return FALSE;
++    }
++
++  /* An encoder naming no rate control at all is one whose rate is settled
++   * some other way, and those are the ones already measured. */
++  pspec = g_object_class_find_property (G_OBJECT_GET_CLASS (probe), "rate-control");
++  if (pspec == NULL || !G_IS_PARAM_SPEC_ENUM (pspec))
++    {
++      holds[element] = 1;
++      return TRUE;
++    }
++
++  modes = G_PARAM_SPEC_ENUM (pspec)->enum_class;
++  for (guint i = 0; i < modes->n_values; i++)
++    {
++      const gchar *nick = modes->values[i].value_nick;
++
++      /* "cbr" where the encoder names a held rate as such, "bitrate" where
++       * it names it by what is being held. */
++      if (g_strcmp0 (nick, "cbr") == 0 || g_strcmp0 (nick, "bitrate") == 0)
++        {
++          holds[element] = 1;
++          return TRUE;
++        }
++    }
++
++  g_message ("WfdMediaFactory: %s cannot be told to hold a rate on this machine and is passed over. "
++             "On these processors' graphics that is firmware which is not loaded by default; "
++             "i915.enable_guc=2 loads it.",
++             wfd_gst_elements[element]);
++  holds[element] = -1;
++  return FALSE;
++}
++
+ static gint
+ wfd_gst_media_profile_present (WfdMediaProfile media_profile)
+ {
+@@ -1244,6 +1314,7 @@
+     {
+       if (wfd_media_factory_profiles[factory_profile].media_profile == media_profile &&
+           wfd_gst_element_present (wfd_media_factory_profiles[factory_profile].video_encoder) &&
++          wfd_gst_element_holds_a_rate (wfd_media_factory_profiles[factory_profile].video_encoder) &&
+           wfd_gst_element_present (wfd_media_factory_profiles[factory_profile].audio_encoder) &&
+           wfd_gst_element_present (wfd_media_factory_profiles[factory_profile].muxer))
+         {
+diff -ruN a/src/wfd/wfd-media-factory.h b/src/wfd/wfd-media-factory.h
+--- a/src/wfd/wfd-media-factory.h
++++ b/src/wfd/wfd-media-factory.h
+@@ -178,10 +178,19 @@
+    * so that what differs between them is the encoder and not the numbers. */
+   [ELEMENT_VAH264LP]  = { .bitrate_kbit = 10 * 1024, .vbv_frames = 2 },
+ 
+-  /* Never measured. Left to the receiver's own maximum, as before. */
+-  [ELEMENT_OPENH264]  = { .bitrate_kbit = 0, .vbv_frames = 0 },
+-  [ELEMENT_VAH264]    = { .bitrate_kbit = 0, .vbv_frames = 0 },
+-  [ELEMENT_VAAPIH264] = { .bitrate_kbit = 0, .vbv_frames = 0 },
++  /* Never measured, and so given what a crowded band was measured carrying
++   * rather than left at the receiver's own maximum.
++   *
++   * Zero means that maximum, and a receiver may announce fourteen megabits.
++   * A link measured carrying five would be asked for nearly three times what
++   * it can take, by the encoders nobody watched, on the machines nobody here
++   * has. Five is not right for them; it is simply not known to be wrong,
++   * which is the better of the two things to ship. Whoever measures one of
++   * these properly should replace its line and say where the number came
++   * from, as the two above do. */
++  [ELEMENT_OPENH264]  = { .bitrate_kbit = 5 * 1024, .vbv_frames = 2 },
++  [ELEMENT_VAH264]    = { .bitrate_kbit = 5 * 1024, .vbv_frames = 2 },
++  [ELEMENT_VAAPIH264] = { .bitrate_kbit = 5 * 1024, .vbv_frames = 2 },
+ };
+ 
+ typedef enum {
