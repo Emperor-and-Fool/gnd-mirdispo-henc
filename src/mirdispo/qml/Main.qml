@@ -199,12 +199,23 @@ Kirigami.ApplicationWindow {
                                 }
                             }
                         }
-                        Controls.Button {
-                            text: "Disconnect"
-                            icon.name: "network-disconnect"
+                        // What can be done to this connection, kept in a column of
+                        // its own so that more than one thing can be offered without
+                        // the text beside it deciding where any of them sit. Every
+                        // card's column is the same width, which is what keeps the
+                        // buttons in one line down the window.
+                        ColumnLayout {
                             Layout.preferredWidth: displaysRoot.actionWidth
+                            Layout.minimumWidth: displaysRoot.actionWidth
+                            Layout.maximumWidth: displaysRoot.actionWidth
                             Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
-                            onClicked: displayBackend.disconnect()
+                            spacing: Kirigami.Units.smallSpacing
+                            Controls.Button {
+                                text: "Disconnect"
+                                icon.name: "network-disconnect"
+                                Layout.fillWidth: true
+                                onClicked: displayBackend.disconnect()
+                            }
                         }
                     }
                     }
@@ -268,12 +279,18 @@ Kirigami.ApplicationWindow {
                                     Layout.fillWidth: true
                                 }
                             }
-                            Controls.Button {
-                                text: "Connect"
-                                icon.name: "network-connect"
+                            ColumnLayout {
                                 Layout.preferredWidth: displaysRoot.actionWidth
+                                Layout.minimumWidth: displaysRoot.actionWidth
+                                Layout.maximumWidth: displaysRoot.actionWidth
                                 Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
-                                onClicked: displayBackend.connectToDevice(deviceId)
+                                spacing: Kirigami.Units.smallSpacing
+                                Controls.Button {
+                                    text: "Connect"
+                                    icon.name: "network-connect"
+                                    Layout.fillWidth: true
+                                    onClicked: displayBackend.connectToDevice(deviceId)
+                                }
                             }
                         }
                         }

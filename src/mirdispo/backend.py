@@ -254,6 +254,14 @@ class DisplayBackend(QObject):
         try:
             if self._service.running():
                 self.devices.replace(self._service.displays())
+                # A receiver that answers after the search has finished used
+                # to arrive in the list while the line above it went on saying
+                # how many had been found at the moment the search ended,
+                # which was none. The sentence counts what is on screen now.
+                if self._status == "idle":
+                    found = self._found_text()
+                    if found != self._status_text:
+                        self._set_status("idle", found)
                 # The helper's state is settled first, because whether it is
                 # running decides how the link state should be read.
                 if self._stream_unit and self._status in ("connecting", "streaming"):
@@ -316,11 +324,14 @@ class DisplayBackend(QObject):
             # Polling is best-effort. Explicit user actions surface failures.
             pass
 
+    def _found_text(self) -> str:
+        count = self.devices.rowCount()
+        return f"Found {count} compatible display" + ("s" if count != 1 else "")
+
     def _finish_scan(self):
         self._scanning = False
         self.scanningChanged.emit()
-        count = self.devices.rowCount()
-        self._set_status("idle", f"Found {count} compatible display" + ("s" if count != 1 else ""))
+        self._set_status("idle", self._found_text())
 
     def _finish_scan_error(self, message: str):
         self._scanning = False
