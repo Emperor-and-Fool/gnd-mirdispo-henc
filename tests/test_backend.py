@@ -49,8 +49,9 @@ class FakeDiscovery:
     unit_active = True
     start_fails = False
 
-    def start_stream(self, uuid):
+    def start_stream(self, uuid, choose_source=False):
         self.started_uuid = uuid
+        self.started_choosing = choose_source
         if self.start_fails:
             return ""
         return "knd-test.service"

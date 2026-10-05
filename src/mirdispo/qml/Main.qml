@@ -286,10 +286,24 @@ Kirigami.ApplicationWindow {
                                 Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
                                 spacing: Kirigami.Units.smallSpacing
                                 Controls.Button {
-                                    text: "Connect"
+                                    // "Connect" the first time, when there is nothing
+                                    // to come back to. Afterwards it is a return to what
+                                    // was being shared, and says so.
+                                    text: displayBackend.canReuseSource ? "Reconnect" : "Connect"
                                     icon.name: "network-connect"
                                     Layout.fillWidth: true
                                     onClicked: displayBackend.connectToDevice(deviceId)
+                                }
+                                // Connecting shares whatever was shared last time, which
+                                // is wanted until it is not. Only offered when there is
+                                // something to be handed back: with nothing remembered,
+                                // connecting asks anyway and this would do the same.
+                                Controls.Button {
+                                    text: "Switch source"
+                                    icon.name: "exchange-positions-zorder"
+                                    visible: displayBackend.canReuseSource
+                                    Layout.fillWidth: true
+                                    onClicked: displayBackend.connectAndChoose(deviceId)
                                 }
                             }
                         }

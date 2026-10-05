@@ -167,9 +167,33 @@ class GnomeNetworkDisplaysService:
         raw = properties.Get(INTERFACE, "Displays")
         return [display_from_dbus(dict(item)) for item in raw]
 
-    def start_stream(self, uuid: str) -> str:
+    @staticmethod
+    def remembered_source() -> bool:
+        """Whether the desktop is holding a choice to hand back.
+
+        The engine writes down what it was given after a cast has started,
+        and hands it back on the next one, which is what makes a second cast
+        share the same thing without asking. So the question of whether there
+        is anything to reuse is the question of whether that is written down.
+
+        It lives where things last a sitting rather than a machine's life, so
+        it is gone after a restart, and so is the reuse it stands for.
+        """
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+        if not runtime_dir:
+            return False
+        return Path(runtime_dir, "mirdispo", "screencast-restore-token").is_file()
+
+    def start_stream(self, uuid: str, choose_source: bool = False) -> str:
+        """Start a cast to this receiver.
+
+        A desktop that remembers what was shared last time hands it back on
+        every cast. Asking for it to be chosen instead is said here, for one
+        cast; what is then chosen becomes what is remembered next."""
+        import dbus
+
         manager, _ = self._dbus()
-        result = manager.StartStream(uuid)
+        result = manager.StartStream(uuid, dbus.Boolean(choose_source))
         return str(result)
 
     def set_discover(self, discover: bool):

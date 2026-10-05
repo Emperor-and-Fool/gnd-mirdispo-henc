@@ -80,7 +80,7 @@ def action_buttons(window):
         for child in item.childItems():
             if "Button" in child.metaObject().className():
                 text = child.property("text")
-                if text in ("Connect", "Disconnect"):
+                if text in ("Connect", "Reconnect", "Disconnect", "Switch source"):
                     found.append((text,
                                   round(child.mapToItem(None, QPointF(0, 0)).x()),
                                   round(child.property("width"))))
@@ -116,6 +116,8 @@ def main():
 
     # A session in progress adds the card carrying Disconnect, so both kinds
     # of button are measured against each other.
+    # Both labels only appear when a choice is remembered, so say one is.
+    backend._can_reuse_source = True
     backend.scan()
     spin(app, 1.0)
     backend.connectToDevice("demo:living-room")

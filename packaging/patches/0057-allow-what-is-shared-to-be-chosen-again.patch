@@ -1,0 +1,52 @@
+From: Mirdispo contributors
+Subject: Allow what is shared to be chosen again
+
+What was shared last time is shared again without asking, because the answer
+is kept and handed back on the next cast. That is right most of the time and
+wrong whenever it is not, and there was no way to say so.
+
+Asking to choose afresh is not a matter of telling the desktop to forget. It
+is a matter of not handing back what is held: with nothing to match against,
+the desktop asks. What is chosen then comes back as a new answer and is
+written down in place of the old one, so the cast after reuses what was just
+picked. Saying instead that the session may not be remembered would also get
+the question asked, and would leave nothing behind to answer with, which
+turns the reuse off rather than stepping past it once.
+
+It has to be known before a session is made, which happens while the helper
+is being constructed, before it has been given the address it was started
+for. So it is read from the environment, which is available then, rather than
+from the address, which is not.
+
+diff -ruN a/src/stream/nd-stream.c b/src/stream/nd-stream.c
+--- a/src/stream/nd-stream.c
++++ b/src/stream/nd-stream.c
+@@ -798,7 +798,27 @@
+       return;
+     }
+ 
+-  g_autofree gchar *restore_token = nd_stream_load_restore_token ();
++  /* What was shared last time is shared again without asking, because the
++   * answer is kept and handed back. Asking to choose afresh is therefore not
++   * a matter of telling the desktop to forget: it is a matter of not handing
++   * back what we hold. The desktop then has nothing to match and asks.
++   *
++   * What is kept is still kept. Whatever is chosen this time comes back as a
++   * new answer and is written down in place of the old one, so the next cast
++   * reuses what was just picked. Saying instead that this session may not be
++   * remembered would get the question asked and leave nothing behind to
++   * answer with, which is a way of turning the reuse off rather than a way
++   * past it, and would ask again every time after.
++   *
++   * It has to be known before a session is made, which is while this is being
++   * constructed, before the address this was started for has arrived. The
++   * environment is read here; the address is not. */
++  gboolean pick_afresh = g_strcmp0 (g_getenv ("ND_STREAM_PICK"), "new") == 0;
++
++  g_autofree gchar *restore_token = pick_afresh ? NULL : nd_stream_load_restore_token ();
++
++  if (pick_afresh)
++    g_message ("NdStream: Asked to choose what to share, so what was shared before is not offered back.");
+ 
+   xdp_portal_create_screencast_session (self->portal,
+                                         XDP_OUTPUT_MONITOR | XDP_OUTPUT_WINDOW | XDP_OUTPUT_VIRTUAL,

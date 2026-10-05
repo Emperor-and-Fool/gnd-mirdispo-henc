@@ -56,6 +56,7 @@ class DisplayBackend(QObject):
         self._picture_text = ""
         self._figures = ["", "", "", "", ""]
         self._reporting = False
+        self._can_reuse_source = False
         self._scanning = False
         self._selected = ""
         self._selected_id = ""
@@ -80,6 +81,8 @@ class DisplayBackend(QObject):
                 # Progress reporting is a nicety; discovery must still work.
                 self._p2p = None
         self.refreshDiagnostics()
+        # One of the two moments the answer can have changed.
+        self._refresh_reuse()
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(2000)
         self._poll_timer.timeout.connect(self._poll_displays)
@@ -121,6 +124,29 @@ class DisplayBackend(QObject):
                 setter(self._stream_unit, wanted)
             except Exception:
                 pass
+
+    @pyqtProperty(bool, notify=statusChanged)
+    def canReuseSource(self):
+        """Whether the desktop is holding a choice of what to share.
+
+        Asked when the window opens and again when a cast ends, which are the
+        only moments it changes, rather than before each connection: the
+        answer cannot alter while a cast is running, and asking then would be
+        asking at the one moment the answer is least interesting."""
+        return self._can_reuse_source
+
+    def _refresh_reuse(self):
+        reuse = False
+        if not self._demo and self._service is not None:
+            reader = getattr(self._service, "remembered_source", None)
+            if reader:
+                try:
+                    reuse = bool(reader())
+                except Exception:
+                    reuse = False
+        if reuse != self._can_reuse_source:
+            self._can_reuse_source = reuse
+            self.statusChanged.emit()
 
     @pyqtProperty(bool, notify=statusChanged)
     def reporting(self):
@@ -475,7 +501,7 @@ class DisplayBackend(QObject):
             self._set_status("connecting", message)
 
     @pyqtSlot(str)
-    def connectToDevice(self, device_id: str):
+    def connectToDevice(self, device_id: str, choose_source: bool = False):
         # Resolve by identifier, never by row: discovery replaces the list
         # every couple of seconds, so a row index can point at a different
         # display by the time the click is handled.
@@ -498,7 +524,7 @@ class DisplayBackend(QObject):
             return
         try:
             self._attempt_started = time.time()
-            self._stream_unit = self._service.start_stream(device.path)
+            self._stream_unit = self._service.start_stream(device.path, choose_source)
             if not self._stream_unit:
                 raise RuntimeError("The streaming service did not start")
             QTimer.singleShot(1200, lambda: self._verify_stream(device.name))
@@ -567,6 +593,13 @@ class DisplayBackend(QObject):
             except Exception:
                 pass
 
+    @pyqtSlot(str)
+    def connectAndChoose(self, device_id: str):
+        """Reach a receiver and be asked what to share, instead of sharing
+        whatever was shared last time. The same as connecting otherwise, and
+        what is chosen becomes what is offered back next time."""
+        self.connectToDevice(device_id, True)
+
     @pyqtSlot()
     def disconnect(self):
         previous = self._selected
@@ -581,6 +614,9 @@ class DisplayBackend(QObject):
         self._last_state = None
         self._reconnects = 0
         self._stream_seen_active = False
+        # The other moment the answer can change: a cast that ran leaves a
+        # choice behind to be handed back, one that never started does not.
+        self._refresh_reuse()
         self.selectedDeviceChanged.emit()
         self._set_status("idle", f"Disconnected from {previous}" if previous else "Ready to find nearby displays")
 
