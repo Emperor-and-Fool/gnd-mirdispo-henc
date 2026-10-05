@@ -275,6 +275,26 @@ class GnomeNetworkDisplaysService:
         except Exception:
             return None
 
+    def stream_notice(self, unit_name: str) -> str | None:
+        """Something the helper needs a person to read, in words rather than
+        as a state: what a virtual display needs, for one. None while there
+        is nothing to read, or where the helper is older than the action."""
+        import dbus
+
+        name = stream_bus_name(unit_name)
+        if not name:
+            return None
+        try:
+            if not self._name_has_owner(name):
+                return None
+            actions = dbus.Interface(self.bus.get_object(name, "/" + name.replace(".", "/")),
+                                     "org.gtk.Actions")
+            _enabled, _parameter, state = actions.Describe("notice")
+            notice = str(state[0]) if state else ""
+            return notice or None
+        except Exception:
+            return None
+
     def stream_state(self, unit_name: str) -> str | None:
         """What the stream helper reports: "wait-p2p", "wait-socket",
         "wait-streaming", "streaming" and so on (patch 0012), or None when

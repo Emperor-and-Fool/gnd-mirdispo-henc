@@ -70,7 +70,7 @@ Section: kde
 Priority: optional
 Architecture: ${architecture}
 Maintainer: Mirdispo contributors <229370513+hencyber@users.noreply.github.com>
-Depends: python3 (>= 3.10), python3-pyqt6, python3-pyqt6.qtqml, python3-dbus, qml6-module-org-kde-kirigami, qml6-module-org-kde-desktop, network-manager, wpasupplicant | iwd, xdg-desktop-portal, xdg-desktop-portal-kde, libavahi-common3 (>= 0.6.16), libavahi-gobject0 (>= 0.6.22), libc6 (>= 2.34), libglib2.0-0t64 (>= 2.83.0), libgstreamer-plugins-base1.0-0 (>= 1.6.0), libgstreamer1.0-0 (>= 1.6.0), libgstrtspserver-1.0-0 (>= 1.8.0), libjson-glib-1.0-0 (>= 1.5.2), libnm0 (>= 1.40.4), libportal1 (>= 0.7), libprotobuf-c1 (>= 1.0.1), libpulse0 (>= 0.99.1), libsoup-3.0-0 (>= 3.0.3), gstreamer1.0-pipewire, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-plugins-ugly
+Depends: python3 (>= 3.10), python3-pyqt6, python3-pyqt6.qtqml, python3-dbus, qml6-module-org-kde-kirigami, qml6-module-org-kde-desktop, network-manager, wpasupplicant | iwd, xdg-desktop-portal, xdg-desktop-portal-kde, krfb, libavahi-common3 (>= 0.6.16), libavahi-gobject0 (>= 0.6.22), libc6 (>= 2.34), libglib2.0-0t64 (>= 2.83.0), libgstreamer-plugins-base1.0-0 (>= 1.6.0), libgstreamer1.0-0 (>= 1.6.0), libgstrtspserver-1.0-0 (>= 1.8.0), libjson-glib-1.0-0 (>= 1.5.2), libnm0 (>= 1.40.4), libportal1 (>= 0.7), libprotobuf-c1 (>= 1.0.1), libpulse0 (>= 0.99.1), libsoup-3.0-0 (>= 3.0.3), gstreamer1.0-pipewire, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-plugins-ugly
 Recommends: gstreamer1.0-libav, gstreamer1.0-pulseaudio
 Conflicts: gnome-network-displays, kde-network-displays
 Replaces: kde-network-displays

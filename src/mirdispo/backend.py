@@ -54,6 +54,7 @@ class DisplayBackend(QObject):
         self._status = "idle"
         self._status_text = "Ready to find nearby displays"
         self._picture_text = ""
+        self._notice_text = ""
         self._figures = ["", "", "", "", ""]
         self._reporting = False
         self._can_reuse_source = False
@@ -296,6 +297,14 @@ class DisplayBackend(QObject):
                     if (picture or "") != self._picture_text:
                         self._picture_text = picture or ""
                         self.statusChanged.emit()
+                    # Something the helper needs read rather than matched on,
+                    # such as what a virtual display needs before it can be
+                    # shared. Shown once, not again, so a person who has read
+                    # it and closed it is not handed it back every poll.
+                    notice = getattr(self._service, "stream_notice", lambda _unit: None)(self._stream_unit)
+                    if notice and notice != self._notice_text:
+                        self._notice_text = notice
+                        self._set_error(notice)
                     if self._reporting:
                         reader = getattr(self._service, "stream_figures", None)
                         figures = reader(self._stream_unit) if reader else None
@@ -516,6 +525,10 @@ class DisplayBackend(QObject):
         self._reconnects = 0
         self._stream_seen_active = False
         self._error = ""
+        # A new cast gets a clean banner, so whatever the last helper needed
+        # read has to be forgotten too, or the next helper saying the same
+        # thing would be taken for something already shown and shown nothing.
+        self._notice_text = ""
         self.errorChanged.emit()
         self.selectedDeviceChanged.emit()
         self._set_status("connecting", f"Connecting to {device.name}…")
