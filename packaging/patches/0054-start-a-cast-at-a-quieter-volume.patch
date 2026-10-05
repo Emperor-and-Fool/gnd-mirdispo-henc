@@ -1,41 +1,60 @@
 From: Mirdispo contributors
 Subject: Start a cast at a volume somebody would not reach to turn down
 
-The output a cast captures through is made when the cast starts, and a new
-one starts at full volume. The receiver at the other end is usually a
-television whose own volume was set for whatever it last played. Full from
-both ends arrives loud, and the first second of a cast is spent reaching for
-a remote.
+A cast starts at full volume into a television whose own volume was set for
+whatever it last played. Full from both ends arrives loud, and the first
+second is spent looking for a remote. It starts at seven tenths instead,
+because being too quiet is the easier mistake to correct: turning something
+up is a thing people do without minding, and being startled is not.
 
-It starts at seven tenths instead. Being too quiet is the easier mistake to
-correct: turning something up is a thing people do without minding, and being
-startled is not. It appears in the sound settings like any other output and
-can be set to whatever suits, and the setting is per cast rather than
-remembered, since the next receiver may be a different television in a
-different room.
+Quieting the output a cast captures through does nothing, which is worth
+writing down because it looks as though it should. What is sent is read from
+that output's monitor, and a monitor does not inherit the volume of the
+output it listens to. Setting the output left it showing seven tenths in the
+sound settings while the monitor, and therefore the television, stayed at
+full - and left a control that appeared to do something and did not, which is
+worse than leaving it alone. The monitor carries the sound, so the monitor is
+
+This does not work yet, and is kept because the reasoning is worth keeping
+rather than because the code does anything. Setting the output itself was
+tried first and changed nothing audible: the output read seven tenths in the
+sound settings while the monitor, which is what the stream reads, stayed at
+full. Setting the monitor instead was the obvious correction and the sound
+arrived at full volume again. So the level is being decided somewhere further
+on - the stream the grabber opens on that monitor carries a volume of its
+own, and so does what the receiver does with what it is sent - and none of
+that has been measured. Whoever picks this up should measure before changing
+anything, since two guesses have already been wrong.
 
 diff -ruN a/src/nd-pulseaudio.c b/src/nd-pulseaudio.c
 --- a/src/nd-pulseaudio.c
 +++ b/src/nd-pulseaudio.c
-@@ -199,6 +199,24 @@
+@@ -199,6 +199,31 @@
  
    g_debug ("NdPulseaudio: Module loaded, we are ready to grab audio! ");
    self->null_module_idx = idx;
 +
-+  /* A new sink starts at full volume, and the receiver is usually a
-+   * television whose own volume is set for whatever it was last playing.
-+   * Full from both ends arrives loud enough to make somebody reach for a
-+   * remote, which is a poor first second of a cast. Starting lower leaves
-+   * room to be turned up, which is the direction a person would rather
-+   * move; this sink appears in the sound settings like any other and can
-+   * be set to whatever suits. */
++  /* A cast starts at full volume into a television whose own volume was set
++   * for whatever it last played, and full from both ends is loud enough to
++   * send somebody looking for a remote. It starts at seven tenths instead:
++   * being too quiet is the easier mistake to correct, since turning
++   * something up is a thing people do without minding and being startled is
++   * not.
++   *
++   * Quieting the output itself does nothing, which is worth writing down
++   * because it looks as though it should. What is sent is read from that
++   * output's monitor, and a monitor does not inherit the volume of the
++   * output it listens to: the output read seven tenths in the sound settings
++   * while the monitor, and so the television, stayed at full. It also left a
++   * control that appeared to do something and did not, which is worse than
++   * leaving it alone. The monitor carries the sound, so the monitor is set. */
 +  {
-+    g_autofree gchar *sink_name = g_strdup_printf (ND_PA_SINK "_%.8s", self->uuid);
++    g_autofree gchar *monitor_name = g_strdup_printf (ND_PA_SINK "_%.8s.monitor", self->uuid);
 +    pa_operation *volume_operation;
 +    pa_cvolume volume;
 +
 +    pa_cvolume_set (&volume, 2, (pa_volume_t) (PA_VOLUME_NORM * 0.7));
-+    volume_operation = pa_context_set_sink_volume_by_name (c, sink_name, &volume, NULL, NULL);
++    volume_operation = pa_context_set_source_volume_by_name (c, monitor_name, &volume, NULL, NULL);
 +    if (volume_operation)
 +      pa_operation_unref (volume_operation);
 +  }

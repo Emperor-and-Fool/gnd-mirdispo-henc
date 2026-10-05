@@ -1,0 +1,51 @@
+From: Mirdispo contributors
+Subject: Leave the sounds a desktop makes on its own account where they are
+
+What is playing when a cast begins is moved onto it, which is what somebody
+casting wants for a film or a podcast. It is not what they want for the short
+sounds a desktop makes about itself: a message arriving, a device being
+plugged in, a warning, something being read aloud. Those are answers to what
+is happening at this machine. Sent to a television, they are how a room full
+of people learns that somebody has had an email.
+
+A desktop says what a sound is for, so those are left where they were, along
+with anything marked as a call, which belongs to whoever is wearing the
+headset rather than to the room.
+
+Everything else moves as before. A sound that says nothing about itself is
+treated as something to send, since that is what most things playing are.
+
+diff -ruN a/src/nd-pulseaudio.c b/src/nd-pulseaudio.c
+--- a/src/nd-pulseaudio.c
++++ b/src/nd-pulseaudio.c
+@@ -162,11 +162,30 @@
+   NdPulseaudio *self = ND_PULSEAUDIO (userdata);
+ 
+   g_autofree gchar *sink_name = NULL;
++  const char *role;
+   pa_operation *operation;
+ 
+   if (eol || info == NULL)
+     return;
+ 
++  /* Not everything playing is something to send. A desktop names what a
++   * sound is for, and the short ones it makes on its own account - a message
++   * arriving, a device being plugged in, a warning, something read aloud -
++   * are answers to what is happening at this machine, not part of what is
++   * being shown on a television. Sending them is how a room full of people
++   * learns that somebody has had an email. They stay where they were, and so
++   * does anything a desktop marks as a call, which belongs to whoever is
++   * wearing the headset rather than to the room. */
++  role = pa_proplist_gets (info->proplist, PA_PROP_MEDIA_ROLE);
++  if (role != NULL &&
++      (g_str_equal (role, "event") ||
++       g_str_equal (role, "a11y") ||
++       g_str_equal (role, "phone")))
++    {
++      g_debug ("NdPulseaudio: Leaving %s (%s) where it is", info->name, role);
++      return;
++    }
++
+   sink_name = g_strdup_printf (ND_PA_SINK "_%.8s", self->uuid);
+ 
+   g_debug ("NdPulseaudio: Moving what is playing (%u) to %s", info->index, sink_name);

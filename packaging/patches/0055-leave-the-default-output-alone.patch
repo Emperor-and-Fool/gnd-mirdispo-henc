@@ -1,0 +1,163 @@
+From: Mirdispo contributors
+Subject: Move what is playing onto the cast, and leave the default output alone
+
+A cast made its own sink the machine's default output and put the previous
+one back when it ended. Anything that stopped the engine without reaching
+that - a crash, a kill, a session ending badly - left the machine configured
+to play into a sink that no longer existed. Sound then stopped working, and
+went on not working across reboots, because the setting is remembered.
+
+This was found on a machine whose sound had failed after use: its configured
+output was a dead cast sink, with seven more behind it in the list, one for
+each cast that had not ended cleanly. The sound card had been left with no
+usable profile. An application should not be able to break the sound on a
+machine it is no longer running on, and no amount of care about putting the
+setting back changes that it is a durable setting being used for a temporary
+purpose.
+
+What was wanted was only that sound reaches the receiver. So what is playing
+when a cast begins is moved onto its sink directly, and the default output is
+not touched. Nothing durable is written, so there is nothing to restore and
+nothing to be left wrong.
+
+Only what is already playing moves, which is also the better behaviour. A
+notification, or something started while presenting, belongs on the machine
+being used rather than on the television in front of the room. Anything else
+can be moved across in the sound settings like any other stream. When a cast
+ends its sink goes away and what was moved returns to the default by itself.
+
+diff -ruN a/src/nd-pulseaudio.c b/src/nd-pulseaudio.c
+--- a/src/nd-pulseaudio.c
++++ b/src/nd-pulseaudio.c
+@@ -21,9 +21,6 @@
+ 
+   pa_operation         *operation;
+ 
+-  /* The output that was the default before the cast took it over, so it can
+-   * be given back when the cast ends. */
+-  gchar                *previous_default_sink;
+ };
+ 
+ static void      nd_pulseaudio_async_initable_iface_init (GAsyncInitableIface *iface);
+@@ -137,28 +134,43 @@
+ 
+ /* The null sink only receives what is played into it, and its monitor is what
+  * the stream sends to the receiver. Left alone, the desktop keeps playing
+- * through its own speakers and the receiver gets silence, unless the user
+- * knows to pick the new output in the sound settings. The sink is therefore
+- * made the default output for the length of the cast, which also moves the
+- * streams that follow the default, and the previous default is restored when
+- * the cast ends. */
+-static void
+-on_pa_server_info_for_default (pa_context           *c,
+-                               const pa_server_info *info,
+-                               void                 *userdata)
++ * through its own speakers and the receiver gets silence.
++ *
++ * What was playing when the cast started is therefore moved onto it, and
++ * nothing else. Not the default output: making a cast sink the default writes
++ * a setting that outlives the cast, and anything that stops the engine
++ * without it putting the setting back - a crash, a kill, a session ending -
++ * leaves the machine configured to play into a sink that no longer exists.
++ * That was found on a machine whose sound had stopped working after use, with
++ * one dead cast sink recorded as its default output and seven more behind it.
++ * An application should not be able to break the sound on a machine it is no
++ * longer running on.
++ *
++ * Moving only what is already playing is also the better behaviour. A
++ * notification, or something started while presenting, belongs on the machine
++ * being used rather than on the television in front of the room. What is
++ * wanted on the television is what was already playing when the cast began,
++ * and anything else can be moved there in the sound settings like any other
++ * stream. When the cast ends its sink goes away and what was moved returns to
++ * the default on its own, with nothing written down to be restored. */
++static void
++on_pa_sink_input_for_move (pa_context               *c,
++                           const pa_sink_input_info *info,
++                           int                       eol,
++                           void                     *userdata)
+ {
+   NdPulseaudio *self = ND_PULSEAUDIO (userdata);
+-  g_autofree gchar *sink_name = g_strdup_printf (ND_PA_SINK "_%.8s", self->uuid);
++
++  g_autofree gchar *sink_name = NULL;
+   pa_operation *operation;
+ 
+-  if (info && info->default_sink_name &&
+-      !g_str_has_prefix (info->default_sink_name, ND_PA_SINK) &&
+-      !self->previous_default_sink)
+-    self->previous_default_sink = g_strdup (info->default_sink_name);
+-
+-  g_debug ("NdPulseaudio: Making %s the default output (was %s)", sink_name,
+-           self->previous_default_sink ? self->previous_default_sink : "unknown");
+-  operation = pa_context_set_default_sink (c, sink_name, NULL, NULL);
++  if (eol || info == NULL)
++    return;
++
++  sink_name = g_strdup_printf (ND_PA_SINK "_%.8s", self->uuid);
++
++  g_debug ("NdPulseaudio: Moving what is playing (%u) to %s", info->index, sink_name);
++  operation = pa_context_move_sink_input_by_name (c, info->index, sink_name, NULL, NULL);
+   if (operation)
+     pa_operation_unref (operation);
+ }
+@@ -166,9 +178,9 @@
+ static void
+ nd_pulseaudio_route_to_sink (NdPulseaudio *self)
+ {
+-  pa_operation *operation = pa_context_get_server_info (self->context,
+-                                                        on_pa_server_info_for_default,
+-                                                        self);
++  pa_operation *operation = pa_context_get_sink_input_info_list (self->context,
++                                                                 on_pa_sink_input_for_move,
++                                                                 self);
+ 
+   if (operation)
+     pa_operation_unref (operation);
+@@ -312,17 +324,6 @@
+     pa_threaded_mainloop_signal (self->mainloop, 0);
+ }
+ 
+-static void
+-nd_pulseaudio_default_restored_cb (pa_context *c, int success, void *userdata)
+-{
+-  NdPulseaudio *self = ND_PULSEAUDIO (userdata);
+-
+-  if (!success)
+-    g_warning ("NdPulseaudio: Could not give the default output back");
+-
+-  if (self->mainloop)
+-    pa_threaded_mainloop_signal (self->mainloop, 0);
+-}
+ 
+ void
+ nd_pulseaudio_unload (NdPulseaudio *self)
+@@ -345,20 +346,6 @@
+       return;
+     }
+ 
+-  if (self->previous_default_sink)
+-    {
+-      g_debug ("NdPulseaudio: Giving the default output back to %s", self->previous_default_sink);
+-      operation = pa_context_set_default_sink (self->context, self->previous_default_sink,
+-                                               nd_pulseaudio_default_restored_cb, self);
+-      if (operation)
+-        {
+-          while (pa_operation_get_state (operation) == PA_OPERATION_RUNNING)
+-            pa_threaded_mainloop_wait (self->mainloop);
+-          pa_operation_unref (operation);
+-        }
+-      g_clear_pointer (&self->previous_default_sink, g_free);
+-    }
+-
+   operation = pa_context_unload_module (self->context,
+                                         self->null_module_idx,
+                                         nd_pulseaudio_unload_module_cb,
+@@ -559,7 +546,6 @@
+   g_clear_pointer (&self->mainloop, pa_threaded_mainloop_free);
+   g_clear_pointer (&self->name, g_free);
+   g_clear_pointer (&self->uuid, g_free);
+-  g_clear_pointer (&self->previous_default_sink, g_free);
+ 
+   G_OBJECT_CLASS (nd_pulseaudio_parent_class)->finalize (object);
+ }
