@@ -1,0 +1,47 @@
+From: Mirdispo contributors
+Subject: Stop asking for a screen that is not there
+
+The portal offers a virtual screen beside monitors and windows, and asking
+for it has been doing harm rather than nothing. The desktop grants it. It
+registers an output, gives it a size and a place on the desk, and lets an
+entire cast be negotiated against it: the receiver's modes are read, a mode
+is agreed, the encoder is set up and told what to hold to. Then no frame
+arrives, because the output has nothing behind it to draw one. A person is
+left watching a cast that looks like it is about to start, and it never is.
+
+It is not a race and no amount of waiting mends it. The output is there and
+empty, and it stays that way for as long as the session lasts.
+
+So this stops asking. A cast now shares a monitor or a window, both of which
+carry pictures. Nothing else changes, and nothing is lost: a screen that is
+not there can still be shared, it simply has to be made first by something
+that gives it a surface. Whatever makes one registers it as an ordinary
+monitor, which is exactly what is still asked for here, so the way to share
+a virtual screen now runs through making one rather than through asking the
+desktop to pretend there is one already.
+
+diff -ruN a/src/stream/nd-stream.c b/src/stream/nd-stream.c
+--- a/src/stream/nd-stream.c
++++ b/src/stream/nd-stream.c
+@@ -820,8 +820,20 @@
+   if (pick_afresh)
+     g_message ("NdStream: Asked to choose what to share, so what was shared before is not offered back.");
+ 
++  /* Monitors and windows, and nothing else. A virtual screen is offered here
++   * too, and it is worse than useless: the desktop grants it, registers an
++   * output for it, sizes it and lets a whole cast be negotiated against it,
++   * and that output has nothing behind it. No frame is ever drawn, so none
++   * is ever sent, and what a person sees is a cast that looks like it is
++   * about to start for as long as they are prepared to wait. A choice that
++   * can only end that way is better not offered.
++   *
++   * A screen that is not there can still be shared; it just has to be made
++   * first, by something that gives it a surface to draw on. What makes one
++   * then registers it as an ordinary monitor, which is what the desktop
++   * offers here and what this asks for. */
+   xdp_portal_create_screencast_session (self->portal,
+-                                        XDP_OUTPUT_MONITOR | XDP_OUTPUT_WINDOW | XDP_OUTPUT_VIRTUAL,
++                                        XDP_OUTPUT_MONITOR | XDP_OUTPUT_WINDOW,
+                                         XDP_SCREENCAST_FLAG_NONE,
+                                         XDP_CURSOR_MODE_EMBEDDED,
+                                         XDP_PERSIST_MODE_PERSISTENT,
