@@ -298,12 +298,33 @@ Kirigami.ApplicationWindow {
                                 // is wanted until it is not. Only offered when there is
                                 // something to be handed back: with nothing remembered,
                                 // connecting asks anyway and this would do the same.
-                                Controls.Button {
-                                    text: "Switch source"
-                                    icon.name: "exchange-positions-zorder"
-                                    visible: displayBackend.canReuseSource
+                                RowLayout {
                                     Layout.fillWidth: true
-                                    onClicked: displayBackend.connectAndChoose(deviceId)
+                                    spacing: Kirigami.Units.smallSpacing
+                                    // Connecting shares whatever was shared last time, which
+                                    // is wanted until it is not. Only offered when there is
+                                    // something to be handed back: with nothing remembered,
+                                    // connecting asks anyway and this would do the same.
+                                    Controls.Button {
+                                        text: "Switch source"
+                                        icon.name: "exchange-positions-zorder"
+                                        visible: displayBackend.canReuseSource
+                                        Layout.fillWidth: true
+                                        onClicked: displayBackend.connectAndChoose(deviceId)
+                                    }
+                                    // Casting the only screen there is leaves nowhere to
+                                    // work, so one is made to cast instead. Square and
+                                    // beside the others rather than a third full line,
+                                    // because it is the rarer thing to want.
+                                    Controls.Button {
+                                        icon.name: "video-display"
+                                        display: Controls.AbstractButton.IconOnly
+                                        Layout.preferredWidth: height
+                                        Layout.alignment: Qt.AlignRight
+                                        Controls.ToolTip.visible: hovered
+                                        Controls.ToolTip.text: "V-screen — make a screen to cast"
+                                        onClicked: displayBackend.makeVirtualScreen(deviceId)
+                                    }
                                 }
                             }
                         }
@@ -518,6 +539,55 @@ Kirigami.ApplicationWindow {
                 }
 
                 Item { Layout.fillHeight: true }
+            }
+        }
+    }
+
+    // Between making the screen and sharing it. The screen exists by the time
+    // this is shown, and Plasma has already put it somewhere, so this says
+    // where it went and offers the one place that can be changed before the
+    // desktop asks what to share.
+    Kirigami.PromptDialog {
+        id: virtualScreenDialog
+        title: "Virtual display created"
+        // Set when the dialog is left by the button rather than dismissed, so
+        // that going on to share it is not mistaken for changing one's mind
+        // and does not take the screen away again.
+        property bool goingOn: false
+        subtitle: "A 1080p screen is placed to the right of your other screens.\n\n"
+                + "To change resolution or position, open the display settings. "
+                + "Continue to pick it as the screen to share."
+        standardButtons: Kirigami.Dialog.NoButton
+        customFooterActions: [
+            Kirigami.Action {
+                text: "Open display settings"
+                icon.name: "preferences-desktop-display"
+                onTriggered: displayBackend.openDisplaySettings()
+            },
+            Kirigami.Action {
+                text: "Continue"
+                icon.name: "dialog-ok"
+                onTriggered: {
+                    virtualScreenDialog.goingOn = true
+                    virtualScreenDialog.close()
+                    displayBackend.shareVirtualScreen()
+                }
+            }
+        ]
+        // Dismissed rather than gone on with: the screen was made for a cast
+        // that is not going to happen, so it goes away again.
+        onRejected: if (!goingOn) displayBackend.dropVirtualScreen()
+        onClosed: if (!goingOn && displayBackend.virtualScreenReady) displayBackend.dropVirtualScreen()
+    }
+
+    Connections {
+        target: displayBackend
+        function onVirtualScreenChanged() {
+            if (displayBackend.virtualScreenReady) {
+                virtualScreenDialog.goingOn = false
+                virtualScreenDialog.open()
+            } else {
+                virtualScreenDialog.close()
             }
         }
     }

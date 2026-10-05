@@ -27,6 +27,7 @@ from PyQt6.QtCore import QCoreApplication
 from mirdispo import p2p
 from mirdispo.backend import DisplayBackend
 from mirdispo.models import Diagnostic, DisplayDevice
+from mirdispo.vscreen import VirtualScreenError
 
 
 class FakeDiscovery:
@@ -566,6 +567,114 @@ class HelperStateTests(unittest.TestCase):
         backend._poll_displays()
         backend.shutdown()
         self.assertFalse(discovery.released)
+
+
+class FakeVirtualScreen:
+    """A screen that is made and taken away without anything appearing on
+    anybody's desk."""
+
+    def __init__(self, fails_with=None):
+        self.running = False
+        self.starts = 0
+        self.stops = 0
+        self._fails_with = fails_with
+
+    def start(self, resolution=None):
+        if self._fails_with:
+            raise VirtualScreenError(self._fails_with)
+        self.starts += 1
+        self.running = True
+        return "Virtual-Mirdispo"
+
+    def stop(self):
+        self.stops += 1
+        self.running = False
+
+
+class VirtualScreenTests(unittest.TestCase):
+    """Making a screen to cast, and being sure it does not outlive its use."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QCoreApplication.instance() or QCoreApplication([])
+
+    def make(self, screen=None):
+        discovery = FakeDiscovery()
+        screen = screen if screen is not None else FakeVirtualScreen()
+        backend = DisplayBackend(
+            discovery=discovery,
+            p2p_watcher=FakeP2P(),
+            scheduler=lambda _ms, callback: callback(),
+            handshake_probe=lambda _since: False,
+            diagnostic_collector=lambda *_: [],
+            virtual_screen=screen,
+            settings_opener=lambda: None,
+        )
+        backend._refresh_real_scan()
+        return discovery, backend, screen
+
+    def test_making_one_does_not_start_a_cast(self):
+        discovery, backend, screen = self.make()
+        backend.makeVirtualScreen("/peer/1")
+        self.assertTrue(screen.running)
+        self.assertTrue(backend.virtualScreenReady)
+        self.assertEqual(backend._stream_unit, "", "nothing should be cast yet")
+        self.assertEqual(backend.status, "idle")
+
+    def test_going_on_casts_and_asks_what_to_share(self):
+        discovery, backend, screen = self.make()
+        backend.makeVirtualScreen("/peer/1")
+        backend.shareVirtualScreen()
+        self.assertFalse(backend.virtualScreenReady)
+        self.assertTrue(screen.running, "the screen being cast must stay")
+        self.assertEqual(backend.status, "connecting")
+        # Asked rather than handed back, or the picker never appears and the
+        # screen just made cannot be chosen.
+        self.assertTrue(discovery.started_choosing)
+
+    def test_changing_their_mind_takes_the_screen_away(self):
+        discovery, backend, screen = self.make()
+        backend.makeVirtualScreen("/peer/1")
+        backend.dropVirtualScreen()
+        self.assertFalse(screen.running)
+        self.assertFalse(backend.virtualScreenReady)
+        self.assertEqual(backend._stream_unit, "")
+
+    def test_disconnecting_takes_the_screen_away(self):
+        discovery, backend, screen = self.make()
+        backend.makeVirtualScreen("/peer/1")
+        backend.shareVirtualScreen()
+        backend.disconnect()
+        self.assertFalse(screen.running)
+
+    def test_quitting_takes_it_away_unless_the_cast_is_left_running(self):
+        discovery, backend, screen = self.make()
+        backend.makeVirtualScreen("/peer/1")
+        backend.shareVirtualScreen()
+        backend.shutdown()
+        self.assertFalse(screen.running, "nothing was casting, so nothing needs it")
+
+        discovery, backend, screen = self.make()
+        backend.makeVirtualScreen("/peer/1")
+        backend.shareVirtualScreen()
+        backend._set_status("streaming", "Sharing")
+        backend.shutdown()
+        self.assertTrue(screen.running, "a cast left running must keep its screen")
+
+    def test_a_missing_program_is_said_and_nothing_is_cast(self):
+        discovery, backend, screen = self.make(
+            screen=FakeVirtualScreen(fails_with="krfb-virtualmonitor was not found."))
+        backend.makeVirtualScreen("/peer/1")
+        self.assertIn("krfb-virtualmonitor", backend.errorText)
+        self.assertFalse(backend.virtualScreenReady)
+        self.assertEqual(backend.status, "idle")
+
+    def test_a_display_that_vanished_makes_no_screen(self):
+        discovery, backend, screen = self.make()
+        backend.makeVirtualScreen("/peer/gone")
+        self.assertEqual(screen.starts, 0)
+        self.assertFalse(backend.virtualScreenReady)
+        self.assertIn("no longer available", backend.errorText)
 
 
 if __name__ == "__main__":

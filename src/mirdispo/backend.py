@@ -28,6 +28,17 @@ from .diagnostics import collect_diagnostics
 from . import p2p
 from .gnd import GnomeNetworkDisplaysService
 from .models import DiagnosticsModel, DisplayDevice, DisplayModel
+from .vscreen import VirtualScreen, VirtualScreenError
+
+
+def _open_display_settings() -> None:
+    """Plasma's own display settings, where a virtual screen is resized and
+    moved like any other. Opened beside the window rather than waited for, so
+    that the dialog that offered it is still there afterwards."""
+    import subprocess
+
+    subprocess.Popen(["kcmshell6", "kcm_kscreen"],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 class DisplayBackend(QObject):
@@ -35,9 +46,13 @@ class DisplayBackend(QObject):
     scanningChanged = pyqtSignal()
     selectedDeviceChanged = pyqtSignal()
     errorChanged = pyqtSignal()
+    # A screen has been made and is waiting to be shared. The window asks what
+    # to do about it; nothing here decides that.
+    virtualScreenChanged = pyqtSignal()
 
     def __init__(self, demo=False, discovery=None, diagnostic_collector=None, p2p_watcher=None,
-                 scheduler=None, handshake_probe=None, parent=None):
+                 scheduler=None, handshake_probe=None, virtual_screen=None, settings_opener=None,
+                 parent=None):
         super().__init__(parent)
         self._demo = demo
         self._service = discovery
@@ -51,6 +66,12 @@ class DisplayBackend(QObject):
         self._handshake_failed = handshake_probe if handshake_probe is not None else (
             p2p.GroupFormationProbe())
         self._diagnostic_collector = diagnostic_collector or collect_diagnostics
+        # The screen to share when there is no second one to share, and how
+        # the display settings are opened. Both injectable so tests do not
+        # make a screen appear on anybody's desk.
+        self._vscreen = virtual_screen if virtual_screen is not None else VirtualScreen()
+        self._open_settings = settings_opener or _open_display_settings
+        self._vscreen_for = ""
         self._status = "idle"
         self._status_text = "Ready to find nearby displays"
         self._picture_text = ""
@@ -597,6 +618,12 @@ class DisplayBackend(QObject):
         # Forgotten whatever else quitting does, including when a cast is
         # left running: the next start asks again either way.
         self._forget_shared_source()
+        # A cast that is left running is left with something to send. Taking
+        # the screen away under a cast that is still going would empty it,
+        # which is the one thing this whole feature exists to prevent, so the
+        # screen outlives the window exactly as far as the cast does.
+        if self._status != "streaming":
+            self.releaseVirtualScreen()
         if self._demo or self._service is None or self._status == "streaming":
             return
         release = getattr(self._service, "release", None)
@@ -613,9 +640,70 @@ class DisplayBackend(QObject):
         what is chosen becomes what is offered back next time."""
         self.connectToDevice(device_id, True)
 
+    @pyqtProperty(bool, notify=virtualScreenChanged)
+    def virtualScreenReady(self):
+        """Whether a screen has been made and is waiting to be shared."""
+        return bool(self._vscreen_for)
+
+    @pyqtSlot(str)
+    def makeVirtualScreen(self, device_id: str):
+        """Make a screen to share, for this receiver.
+
+        Nothing is cast yet. The screen has to exist before the desktop will
+        offer it, and a person has to be able to see where it was put and
+        change their mind about it, so making it and sharing it are two steps
+        with a dialog between them."""
+        if self.devices.by_id(device_id) is None:
+            self._set_error("That display is no longer available")
+            return
+        try:
+            self._vscreen.start()
+        except VirtualScreenError as error:
+            self._set_error(str(error))
+            return
+        self._vscreen_for = device_id
+        self.virtualScreenChanged.emit()
+
+    @pyqtSlot()
+    def shareVirtualScreen(self):
+        """Share the screen that was made: the desktop is asked what to share
+        and the new screen is there among the real ones, under its own name."""
+        device_id, self._vscreen_for = self._vscreen_for, ""
+        self.virtualScreenChanged.emit()
+        if device_id:
+            self.connectAndChoose(device_id)
+
+    @pyqtSlot()
+    def dropVirtualScreen(self):
+        """Changed their mind. The screen goes away again, and nothing was
+        cast, so there is nothing else to undo."""
+        self.releaseVirtualScreen()
+
+    @pyqtSlot()
+    def releaseVirtualScreen(self):
+        """Take away whatever screen was made, whenever there is no longer a
+        reason for it: the cast ended, or the window is closing. Harmless when
+        none was made, which is the usual case."""
+        had = bool(self._vscreen_for)
+        self._vscreen_for = ""
+        self._vscreen.stop()
+        if had:
+            self.virtualScreenChanged.emit()
+
+    @pyqtSlot()
+    def openDisplaySettings(self):
+        """Plasma's display settings, for moving or resizing what was made."""
+        try:
+            self._open_settings()
+        except Exception as error:
+            self._set_error(str(error))
+
     @pyqtSlot()
     def disconnect(self):
         previous = self._selected
+        # Whatever was made to be shared goes when the sharing does. A screen
+        # left behind is one nobody asked for and nothing else would remove.
+        self.releaseVirtualScreen()
         if not self._demo and self._stream_unit and self._service:
             try:
                 self._service.stop_stream(self._stream_unit)

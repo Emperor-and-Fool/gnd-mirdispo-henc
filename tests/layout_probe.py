@@ -151,9 +151,18 @@ def main():
         return 2
 
     left_edges = {x for _, x, _ in buttons}
-    widths = {w for _, _, w in buttons}
-    if len(widths) != 1:
-        print(f"buttons have different widths: {sorted(widths)}")
+    # One width per label rather than one width for all of them. Switch source
+    # now shares its line with the square button that makes a screen to cast,
+    # so it is legitimately narrower than the full-width buttons above it. What
+    # still may not vary is the same button from one card to the next: that is
+    # the fault this was written for, a long receiver name shrinking or moving
+    # the button beside it.
+    widths = {}
+    for text, _x, width in buttons:
+        widths.setdefault(text, set()).add(width)
+    uneven = {text: sorted(seen) for text, seen in widths.items() if len(seen) != 1}
+    if uneven:
+        print(f"the same button comes out different widths: {uneven}")
         return 2
     if len(left_edges) != 1:
         print(f"buttons do not share a column: {sorted(left_edges)}")
