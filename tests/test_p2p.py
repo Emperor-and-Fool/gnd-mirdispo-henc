@@ -24,7 +24,8 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from mirdispo.p2p import GroupFormationProbe, group_interfaces
+from mirdispo import p2p
+from mirdispo.p2p import GroupFormationProbe, group_band, group_interfaces
 
 
 class GroupInterfaceTests(unittest.TestCase):
@@ -82,3 +83,61 @@ class GroupFormationProbeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GroupBandTests(unittest.TestCase):
+    """Which band the receiver put the group on, read from the kernel."""
+
+    LINK_24 = """Connected to 42:cb:8b:51:29:24 (on p2p-wlp0s20-1)
+\tSSID: DIRECT-ft
+\tfreq: 2437.0
+\tsignal: -52 dBm
+\ttx bitrate: 39.0 MBit/s MCS 10
+"""
+    LINK_5 = """Connected to 42:cb:8b:51:29:24 (on p2p-wlp0s20-8)
+\tSSID: DIRECT-PK
+\tfreq: 5785.0
+\tsignal: -63 dBm
+\ttx bitrate: 263.3 MBit/s VHT-MCS 6 80MHz VHT-NSS 1
+"""
+
+    def test_a_group_on_a_social_channel_is_named(self):
+        band = group_band(runner=lambda _argv: self.LINK_24,
+                          interfaces=lambda: {"p2p-wlp0s20-1"})
+        self.assertEqual(band, p2p.BAND_24)
+
+    def test_a_group_on_five_gigahertz_is_named(self):
+        band = group_band(runner=lambda _argv: self.LINK_5,
+                          interfaces=lambda: {"p2p-wlp0s20-8"})
+        self.assertEqual(band, p2p.BAND_5)
+
+    def test_no_group_means_no_answer(self):
+        self.assertIsNone(group_band(runner=lambda _argv: self.LINK_5,
+                                     interfaces=lambda: set()))
+
+    def test_a_reader_that_fails_is_not_an_answer(self):
+        def explode(_argv):
+            raise FileNotFoundError("iw")
+
+        self.assertIsNone(group_band(runner=explode,
+                                     interfaces=lambda: {"p2p-wlp0s20-1"}))
+
+    def test_an_interface_with_no_link_is_not_an_answer(self):
+        self.assertIsNone(group_band(runner=lambda _argv: "Not connected.\n",
+                                     interfaces=lambda: {"p2p-wlp0s20-1"}))
+
+    def test_a_frequency_in_neither_band_is_not_an_answer(self):
+        # Six gigahertz is out of Wi-Fi Direct's reach; reading it as a band
+        # would turn an impossibility into a warning.
+        self.assertIsNone(group_band(runner=lambda _argv: "\tfreq: 6135.0\n",
+                                     interfaces=lambda: {"p2p-wlp0s20-1"}))
+
+    def test_the_interface_is_the_one_that_is_up(self):
+        seen = []
+
+        def record(argv):
+            seen.append(argv)
+            return self.LINK_24
+
+        group_band(runner=record, interfaces=lambda: {"p2p-wlp0s20-3"})
+        self.assertEqual(seen, [["iw", "dev", "p2p-wlp0s20-3", "link"]])

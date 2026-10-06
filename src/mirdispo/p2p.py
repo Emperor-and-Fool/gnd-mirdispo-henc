@@ -146,6 +146,60 @@ def group_interfaces(root=SYS_CLASS_NET) -> set[str]:
     return found
 
 
+BAND_24 = "2.4 GHz"
+BAND_5 = "5 GHz"
+
+
+def group_band(runner=None, interfaces=None) -> str | None:
+    """Which band the Wi-Fi Direct group is actually running on.
+
+    The receiver decides this, not us. A group owner picks the channel its
+    group lives on, and a television that answers on one of the social
+    channels and never moves the group off it leaves a cast on 2.4 GHz at
+    twenty megahertz wide, where there is a fraction of the room a cast was
+    measured to need. Nothing on this side gets a vote, so the only thing to
+    be done about it is to notice.
+
+    Noticing has to happen here rather than in the engine, because nothing the
+    engine can reach knows the answer: NetworkManager publishes the peer and
+    the hardware address of the P2P device and no frequency at all, and
+    wpa_supplicant's own bus refuses anyone who is not root. The frequency is
+    in the kernel, where the netlink interface will give it to any user who
+    asks, and iw is what asks.
+
+    None where there is no group up, where iw is not installed, or where it
+    says anything this does not understand. A band that cannot be read is not
+    a band that is wrong."""
+    import subprocess
+
+    found = sorted((interfaces or group_interfaces)())
+    if not found:
+        return None
+
+    run = runner or (lambda argv: subprocess.run(argv, capture_output=True, text=True, timeout=5).stdout)
+
+    for interface in found:
+        try:
+            output = run(["iw", "dev", interface, "link"])
+        except Exception:
+            return None
+        for line in (output or "").splitlines():
+            line = line.strip()
+            if not line.startswith("freq:"):
+                continue
+            try:
+                megahertz = float(line.split(":", 1)[1].strip())
+            except ValueError:
+                continue
+            # The two bands a receiver can put a group on. Six gigahertz is
+            # not in Wi-Fi Direct's reach and anything else is not a band.
+            if 2400 <= megahertz < 2500:
+                return BAND_24
+            if 5000 <= megahertz < 5900:
+                return BAND_5
+    return None
+
+
 class GroupFormationProbe:
     """Tells a lost handshake apart from a slow one, without the journal.
 
