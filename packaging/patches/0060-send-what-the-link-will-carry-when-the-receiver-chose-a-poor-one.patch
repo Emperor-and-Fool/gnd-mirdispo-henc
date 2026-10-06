@@ -18,7 +18,7 @@ own bus refuses anyone who is not root. The client can see it. So the client
 says so, and this is told rather than asking.
 
 Being told, a cast asks for a mode and a rate the poor link will carry:
-thirty frames a second at 1280x720, and half the bitrate. Fewer frames rather
+thirty frames a second at 1280x720, and four megabits. Fewer frames rather
 than fewer pixels, because what is being shared is a desktop, and text that
 stays sharp while moving at thirty is worth more than text that is smeared
 while moving at sixty. The larger modes stay behind it for receivers that
@@ -230,7 +230,7 @@ diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
 +   * does not. Whoever started the cast says which case this is; the engine
 +   * cannot see it. */
 +  if (g_strcmp0 (g_getenv ("ND_STREAM_LINK"), "slow") == 0)
-+    bitrate_kbit = MIN (bitrate_kbit, 5 * 1024);
++    bitrate_kbit = MIN (bitrate_kbit, 4 * 1024);
 +
    /* At a higher refresh rate the same bitrate is spread over more frames,
     * each of which would get fewer bits. The limit grows with the rate, so a
