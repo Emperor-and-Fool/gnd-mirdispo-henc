@@ -49,6 +49,8 @@ class DisplayBackend(QObject):
     # A screen has been made and is waiting to be shared. The window asks what
     # to do about it; nothing here decides that.
     virtualScreenChanged = pyqtSignal()
+    # The band this cast landed on, and whether what we send fits it.
+    linkChanged = pyqtSignal()
 
     def __init__(self, demo=False, discovery=None, diagnostic_collector=None, p2p_watcher=None,
                  scheduler=None, handshake_probe=None, virtual_screen=None, settings_opener=None,
@@ -72,6 +74,11 @@ class DisplayBackend(QObject):
         self._vscreen = virtual_screen if virtual_screen is not None else VirtualScreen()
         self._open_settings = settings_opener or _open_display_settings
         self._vscreen_for = ""
+        # Which band the receiver put this cast on, and whether we are sending
+        # what that band will carry. Read once per cast: a group does not
+        # change channel while it lives.
+        self._band = ""
+        self._slow_link = False
         self._status = "idle"
         self._status_text = "Ready to find nearby displays"
         self._picture_text = ""
@@ -313,6 +320,13 @@ class DisplayBackend(QObject):
                 # The helper's state is settled first, because whether it is
                 # running decides how the link state should be read.
                 if self._stream_unit and self._status in ("connecting", "streaming"):
+                    # Once per cast: a group does not change channel while it
+                    # lives, and reading costs a process each time.
+                    if not self._band:
+                        band = p2p.group_band()
+                        if band:
+                            self._band = band
+                            self.linkChanged.emit()
                     helper_state = getattr(self._service, "stream_state", lambda _unit: None)(self._stream_unit)
                     picture = getattr(self._service, "stream_picture", lambda _unit: None)(self._stream_unit)
                     if (picture or "") != self._picture_text:
@@ -545,6 +559,10 @@ class DisplayBackend(QObject):
         self._last_state = None
         self._reconnects = 0
         self._stream_seen_active = False
+        # Read again for this cast. The band belongs to the group, and a new
+        # cast forms a new one, which the receiver may put somewhere else.
+        self._band = ""
+        self.linkChanged.emit()
         self._error = ""
         # A new cast gets a clean banner, so whatever the last helper needed
         # read has to be forgotten too, or the next helper saying the same
@@ -558,7 +576,8 @@ class DisplayBackend(QObject):
             return
         try:
             self._attempt_started = time.time()
-            self._stream_unit = self._service.start_stream(device.path, choose_source)
+            self._stream_unit = self._service.start_stream(device.path, choose_source,
+                                                           self._slow_link)
             if not self._stream_unit:
                 raise RuntimeError("The streaming service did not start")
             QTimer.singleShot(1200, lambda: self._verify_stream(device.name))
@@ -679,6 +698,44 @@ class DisplayBackend(QObject):
         cast, so there is nothing else to undo."""
         self.releaseVirtualScreen()
 
+    @pyqtProperty(str, notify=linkChanged)
+    def linkBand(self):
+        """Which band the receiver put this cast on, or empty while unknown."""
+        return self._band
+
+    @pyqtProperty(bool, notify=linkChanged)
+    def linkTooSlow(self):
+        """Whether the link and what is being sent disagree.
+
+        True only while a poor band is carrying the full picture, which is the
+        one case a person can do something about. Once what is sent matches
+        the band, this is false again even though the band is no better: there
+        is nothing left to act on, and a control that keeps asking for an
+        answer already given is noise."""
+        return self._band == p2p.BAND_24 and not self._slow_link
+
+    @pyqtProperty(bool, notify=linkChanged)
+    def linkMatched(self):
+        """Whether a poor band is being sent what it will carry."""
+        return self._band == p2p.BAND_24 and self._slow_link
+
+    @pyqtSlot()
+    def matchLinkFormat(self):
+        """Send what this link will carry, from now on.
+
+        What was settled with the receiver cannot be changed under a running
+        cast, so the cast is ended and started again. The gap is the cost of
+        the answer and is why this is asked for rather than done."""
+        device_id = self._selected_id
+        if not device_id:
+            return
+        # Ending the cast forgets the choice, as it should for any ordinary
+        # cast, so the choice is made after that and before the next one.
+        self.disconnect()
+        self._slow_link = True
+        self.linkChanged.emit()
+        self.connectToDevice(device_id)
+
     @pyqtSlot()
     def releaseVirtualScreen(self):
         """Take away whatever screen was made, whenever there is no longer a
@@ -704,6 +761,11 @@ class DisplayBackend(QObject):
         # Whatever was made to be shared goes when the sharing does. A screen
         # left behind is one nobody asked for and nothing else would remove.
         self.releaseVirtualScreen()
+        # Every cast starts optimistic. What the receiver did with the last
+        # one says nothing about where it will put the next.
+        self._band = ""
+        self._slow_link = False
+        self.linkChanged.emit()
         if not self._demo and self._stream_unit and self._service:
             try:
                 self._service.stop_stream(self._stream_unit)

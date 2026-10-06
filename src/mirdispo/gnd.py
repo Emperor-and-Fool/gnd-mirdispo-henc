@@ -184,16 +184,22 @@ class GnomeNetworkDisplaysService:
             return False
         return Path(runtime_dir, "mirdispo", "screencast-restore-token").is_file()
 
-    def start_stream(self, uuid: str, choose_source: bool = False) -> str:
+    def start_stream(self, uuid: str, choose_source: bool = False,
+                     slow_link: bool = False) -> str:
         """Start a cast to this receiver.
 
         A desktop that remembers what was shared last time hands it back on
         every cast. Asking for it to be chosen instead is said here, for one
-        cast; what is then chosen becomes what is remembered next."""
+        cast; what is then chosen becomes what is remembered next.
+
+        Which band the receiver put the group on is said here too, because
+        only this side can see it, and the engine sends a mode and a rate a
+        poor link will carry rather than one it will not."""
         import dbus
 
         manager, _ = self._dbus()
-        result = manager.StartStream(uuid, dbus.Boolean(choose_source))
+        result = manager.StartStream(uuid, dbus.Boolean(choose_source),
+                                     dbus.Boolean(slow_link))
         return str(result)
 
     def set_discover(self, discover: bool):

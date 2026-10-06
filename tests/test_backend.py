@@ -50,9 +50,12 @@ class FakeDiscovery:
     unit_active = True
     start_fails = False
 
-    def start_stream(self, uuid, choose_source=False):
+    started_slow = None
+
+    def start_stream(self, uuid, choose_source=False, slow_link=False):
         self.started_uuid = uuid
         self.started_choosing = choose_source
+        self.started_slow = slow_link
         if self.start_fails:
             return ""
         return "knd-test.service"
@@ -679,3 +682,86 @@ class VirtualScreenTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LinkBandTests(unittest.TestCase):
+    """Noticing the band the receiver chose, and sending what it will carry."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QCoreApplication.instance() or QCoreApplication([])
+
+    def make(self, band=None):
+        discovery = FakeDiscovery()
+        backend = DisplayBackend(
+            discovery=discovery,
+            p2p_watcher=FakeP2P(),
+            scheduler=lambda _ms, callback: callback(),
+            handshake_probe=lambda _since: False,
+            diagnostic_collector=lambda *_: [],
+        )
+        backend._refresh_real_scan()
+        self.bands = [band]
+        p2p_group_band = p2p.group_band
+        p2p.group_band = lambda: self.bands[0]
+        self.addCleanup(setattr, p2p, "group_band", p2p_group_band)
+        return discovery, backend
+
+    def test_a_cast_starts_asking_for_the_full_picture(self):
+        discovery, backend = self.make(band=p2p.BAND_5)
+        backend.connectToDevice("/peer/1")
+        self.assertIs(discovery.started_slow, False)
+
+    def test_a_good_band_asks_nothing_of_anybody(self):
+        discovery, backend = self.make(band=p2p.BAND_5)
+        backend.connectToDevice("/peer/1")
+        backend._poll_displays()
+        self.assertEqual(backend.linkBand, p2p.BAND_5)
+        self.assertFalse(backend.linkTooSlow)
+        self.assertFalse(backend.linkMatched)
+
+    def test_a_poor_band_carrying_the_full_picture_asks(self):
+        discovery, backend = self.make(band=p2p.BAND_24)
+        backend.connectToDevice("/peer/1")
+        backend._poll_displays()
+        self.assertEqual(backend.linkBand, p2p.BAND_24)
+        self.assertTrue(backend.linkTooSlow, "this is the one case to act on")
+        self.assertFalse(backend.linkMatched)
+
+    def test_matching_the_format_reconnects_and_stops_asking(self):
+        discovery, backend = self.make(band=p2p.BAND_24)
+        backend.connectToDevice("/peer/1")
+        backend._poll_displays()
+        backend.matchLinkFormat()
+        self.assertIs(discovery.started_slow, True, "the engine must be told")
+        backend._poll_displays()
+        self.assertTrue(backend.linkMatched)
+        self.assertFalse(backend.linkTooSlow, "nothing left to act on")
+
+    def test_the_next_ordinary_cast_starts_optimistic_again(self):
+        discovery, backend = self.make(band=p2p.BAND_24)
+        backend.connectToDevice("/peer/1")
+        backend._poll_displays()
+        backend.matchLinkFormat()
+        self.assertIs(discovery.started_slow, True)
+        backend.disconnect()
+        backend.connectToDevice("/peer/1")
+        self.assertIs(discovery.started_slow, False,
+                      "where the receiver puts the next group is not known yet")
+
+    def test_a_band_that_cannot_be_read_says_nothing(self):
+        discovery, backend = self.make(band=None)
+        backend.connectToDevice("/peer/1")
+        backend._poll_displays()
+        self.assertEqual(backend.linkBand, "")
+        self.assertFalse(backend.linkTooSlow)
+        self.assertFalse(backend.linkMatched)
+
+    def test_the_band_is_read_once_rather_than_every_poll(self):
+        discovery, backend = self.make(band=p2p.BAND_24)
+        reads = []
+        p2p.group_band = lambda: (reads.append(1), p2p.BAND_24)[1]
+        backend.connectToDevice("/peer/1")
+        for _ in range(4):
+            backend._poll_displays()
+        self.assertEqual(len(reads), 1, "a group does not change channel")

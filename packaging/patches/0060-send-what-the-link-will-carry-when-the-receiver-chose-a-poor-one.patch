@@ -1,0 +1,237 @@
+From: Mirdispo contributors
+Subject: Send what the link will carry when the receiver chose a poor one
+
+Which band a cast runs on is the receiver's decision. A group owner that
+answers on one of the social channels and never moves the group off it puts
+the whole cast on 2.4 GHz at twenty megahertz wide, where there is a fraction
+of the room a cast was measured to need. The same receiver, the same room and
+the same settings gave sixty frames a second out of sixty on 5 GHz and
+thirteen out of sixty twenty minutes later on 2.4, with the band the only
+thing that had changed. On the poor link the encoder was throwing away
+between four and seven frames in ten to keep up, and what arrived was a
+slideshow.
+
+Nothing in the engine can see which happened. The frequency is in the kernel
+and reachable by anyone who asks it over netlink, but NetworkManager
+publishes no frequency at all for a Wi-Fi Direct device and wpa_supplicant's
+own bus refuses anyone who is not root. The client can see it. So the client
+says so, and this is told rather than asking.
+
+Being told, a cast asks for a mode and a rate the poor link will carry:
+thirty frames a second at 1280x720, and half the bitrate. Fewer frames rather
+than fewer pixels, because what is being shared is a desktop, and text that
+stays sharp while moving at thirty is worth more than text that is smeared
+while moving at sixty. The larger modes stay behind it for receivers that
+offer nothing else.
+
+It travels the way the other thing a helper must know before it has done
+anything travels: an argument on the method, into the environment the helper
+is started with, read once while the mode is chosen and once while the rate
+is set. Both happen before there is a cast to change.
+
+diff -ruN a/src/nd-manager.c b/src/nd-manager.c
+--- a/src/nd-manager.c
++++ b/src/nd-manager.c
+@@ -131,6 +131,7 @@
+ static gchar *
+ nd_manager_start_transient_unit (NdManager   *manager,
+                                  gboolean     choose_source,
++                                 gboolean     slow_link,
+                                  const gchar *uri,
+                                  const gchar *uuid,
+                                  const gchar *display_name)
+@@ -144,7 +145,7 @@
+   GVariant *properties;
+   GVariant *aux;
+ 
+-  properties = build_properties (unit_name, uri, display_name, choose_source);
++  properties = build_properties (unit_name, uri, display_name, choose_source, slow_link);
+   aux = build_aux ();
+ 
+   nd_dbus_org_freedesktop_systemd1_manager_call_start_transient_unit_sync (
+@@ -191,7 +192,8 @@
+ nd_manager_start_sandboxed_stream (NdManager   *manager,
+                                    const gchar *uri,
+                                    const gchar *uuid,
+-                                   gboolean     choose_source)
++                                   gboolean     choose_source,
++                                   gboolean     slow_link)
+ {
+   g_autofree gchar *unit_name = build_stream_unit_name (uuid);
+   g_autoptr(GSubprocessLauncher) launcher = NULL;
+@@ -202,6 +204,8 @@
+   g_subprocess_launcher_setenv (launcher, "ND_STREAM_UNIT", unit_name, TRUE);
+   if (choose_source)
+     g_subprocess_launcher_setenv (launcher, "ND_STREAM_PICK", "new", TRUE);
++  if (slow_link)
++    g_subprocess_launcher_setenv (launcher, "ND_STREAM_LINK", "slow", TRUE);
+   subprocess = g_subprocess_launcher_spawn (launcher, &error,
+                                             nd_stream_helper_path (), uri, NULL);
+   if (!subprocess)
+@@ -260,6 +264,7 @@
+                         GDBusMethodInvocation *invocation,
+                         const gchar           *uuid,
+                         gboolean               choose_source,
++                        gboolean               slow_link,
+                         gpointer               user_data)
+ {
+   g_autoptr(GList) list = NULL;
+@@ -296,9 +301,9 @@
+   g_autofree gchar *name = NULL;
+   g_object_get (sink, "display_name", &name, NULL);
+   if (manager->sandboxed)
+-    unit_name = nd_manager_start_sandboxed_stream (manager, uri, uuid, choose_source);
++    unit_name = nd_manager_start_sandboxed_stream (manager, uri, uuid, choose_source, slow_link);
+   else
+-    unit_name = nd_manager_start_transient_unit (manager, choose_source, uri, uuid, name);
++    unit_name = nd_manager_start_transient_unit (manager, choose_source, slow_link, uri, uuid, name);
+ 
+   if (!unit_name)
+     {
+diff -ruN a/src/nd-systemd-helpers.c b/src/nd-systemd-helpers.c
+--- a/src/nd-systemd-helpers.c
++++ b/src/nd-systemd-helpers.c
+@@ -85,7 +85,8 @@
+ build_properties (const gchar *unit_name,
+                   const gchar *uri,
+                   const gchar *display_name,
+-                  gboolean     choose_source)
++                  gboolean     choose_source,
++                  gboolean     slow_link)
+ {
+   GVariantBuilder properties_builder;
+   GVariantBuilder environment_builder;
+@@ -112,6 +113,13 @@
+     g_variant_builder_add_value (&environment_builder,
+                                  g_variant_new_string ("ND_STREAM_PICK=new"));
+ 
++  /* Which band the receiver put the group on, said by whoever started the
++   * cast because nothing here can see it. Read while the mode is chosen and
++   * while the rate is set, both of which happen before a cast is running. */
++  if (slow_link)
++    g_variant_builder_add_value (&environment_builder,
++                                 g_variant_new_string ("ND_STREAM_LINK=slow"));
++
+   g_variant_builder_add (&properties_builder, "(sv)", "Environment",
+                          g_variant_builder_end (&environment_builder));
+ 
+diff -ruN a/src/nd-systemd-helpers.h b/src/nd-systemd-helpers.h
+--- a/src/nd-systemd-helpers.h
++++ b/src/nd-systemd-helpers.h
+@@ -4,7 +4,8 @@
+ GVariant * build_properties (const gchar *unit_name,
+                              const gchar *uri,
+                              const gchar *display_name,
+-                             gboolean     choose_source);
++                             gboolean     choose_source,
++                             gboolean     slow_link);
+ GVariant * build_aux ();
+ gchar * build_stream_unit_name (const gchar *sink_uuid);
+ const gchar * nd_stream_helper_path (void);
+diff -ruN a/src/org.gnome.NetworkDisplays.Manager.xml b/src/org.gnome.NetworkDisplays.Manager.xml
+--- a/src/org.gnome.NetworkDisplays.Manager.xml
++++ b/src/org.gnome.NetworkDisplays.Manager.xml
+@@ -64,11 +64,17 @@
+             last time. A desktop that remembers the answer is handed it back
+             on every cast, which is wanted until it is not; this says so for
+             one cast, and whatever is chosen becomes what is remembered next.
++        @slow_link: Send what a link the receiver chose will carry, rather
++            than what the receiver would take. Which band a cast runs on is
++            the receiver's decision and only a client can see it, so a client
++            says so here and the engine is told rather than asked.
++
+         @stream_unit_name: Name of the resulting transient service
+     -->
+     <method name="StartStream">
+       <arg name="sink_uuid" type="s" direction="in" />
+       <arg name="choose_source" type="b" direction="in" />
++      <arg name="slow_link" type="b" direction="in" />
+       <arg name="stream_unit_name" type="s" direction="out" />
+     </method>
+ 
+diff -ruN a/src/wfd/wfd-client.c b/src/wfd/wfd-client.c
+--- a/src/wfd/wfd-client.c
++++ b/src/wfd/wfd-client.c
+@@ -252,12 +252,34 @@
+  * written. A receiver offering none of them is chosen for as before, so a
+  * preference costs nothing where it cannot be met.
+  */
+-static const struct
++typedef struct
+ {
+   gint width;
+   gint height;
+   gint refresh_rate;
+-} wfd_preferred_modes[] = {
++} WfdPreferredMode;
++
++static const WfdPreferredMode wfd_preferred_modes[] = {
++  { 1280, 720, 60 },
++  { 1920, 1080, 30 },
++};
++
++/* The same question asked of a link that will not carry any of those. Which
++ * band a cast runs on is the receiver's decision: a group owner that answers
++ * on a social channel and leaves the group there puts the cast on 2.4 GHz at
++ * twenty megahertz wide. Measured on one, the encoder was throwing away
++ * between four and seven frames in ten to keep up and what arrived was a
++ * slideshow.
++ *
++ * Fewer frames rather than fewer pixels, because the picture that is wanted
++ * is still a desktop: text that stays sharp and moves at thirty is worth
++ * more than text that is smeared and moves at sixty. The larger mode is kept
++ * behind it only for receivers that offer nothing else.
++ *
++ * Whoever started the cast says which list to read, because only the client
++ * can see the band: the frequency is not on anything the engine can reach. */
++static const WfdPreferredMode wfd_slow_link_modes[] = {
++  { 1280, 720, 30 },
+   { 1280, 720, 60 },
+   { 1920, 1080, 30 },
+ };
+@@ -268,8 +290,11 @@
+   g_autoptr(GList) preferred = NULL;
+   g_autoptr(GList) all = wfd_video_codec_get_resolutions (codec);
+   WfdResolution *best = NULL;
++  gboolean slow = g_strcmp0 (g_getenv ("ND_STREAM_LINK"), "slow") == 0;
++  const WfdPreferredMode *wanted = slow ? wfd_slow_link_modes : wfd_preferred_modes;
++  gsize wanted_count = slow ? G_N_ELEMENTS (wfd_slow_link_modes) : G_N_ELEMENTS (wfd_preferred_modes);
+ 
+-  for (gsize i = 0; i < G_N_ELEMENTS (wfd_preferred_modes); i++)
++  for (gsize i = 0; i < wanted_count; i++)
+     {
+       for (GList *item = all; item; item = item->next)
+         {
+@@ -278,9 +303,9 @@
+           if (candidate->interlaced)
+             continue;
+ 
+-          if (candidate->width == wfd_preferred_modes[i].width &&
+-              candidate->height == wfd_preferred_modes[i].height &&
+-              candidate->refresh_rate == wfd_preferred_modes[i].refresh_rate)
++          if (candidate->width == wanted[i].width &&
++              candidate->height == wanted[i].height &&
++              candidate->refresh_rate == wanted[i].refresh_rate)
+             {
+               g_message ("WfdClient: The receiver offers %ix%i@%i, which is asked for ahead of its own best.",
+                          candidate->width, candidate->height, candidate->refresh_rate);
+diff -ruN a/src/wfd/wfd-media-factory.c b/src/wfd/wfd-media-factory.c
+--- a/src/wfd/wfd-media-factory.c
++++ b/src/wfd/wfd-media-factory.c
+@@ -913,6 +913,16 @@
+    * Wi-Fi link carries. */
+   bitrate_kbit = MIN (bitrate_kbit, 10 * 1024);
+ 
++  /* Unless the link will not carry it. A cast the receiver put on 2.4 GHz at
++   * twenty megahertz wide has a fraction of the room: measured on one, the
++   * encoder was throwing away between four and seven frames in ten to keep
++   * up, and what arrived was a slideshow. Half the rate and half the frames
++   * fit, and a soft picture that moves is worth more than a sharp one that
++   * does not. Whoever started the cast says which case this is; the engine
++   * cannot see it. */
++  if (g_strcmp0 (g_getenv ("ND_STREAM_LINK"), "slow") == 0)
++    bitrate_kbit = MIN (bitrate_kbit, 5 * 1024);
++
+   /* At a higher refresh rate the same bitrate is spread over more frames,
+    * each of which would get fewer bits. The limit grows with the rate, so a
+    * 60 Hz frame gets as many as a 30 Hz one, still within the receiver's

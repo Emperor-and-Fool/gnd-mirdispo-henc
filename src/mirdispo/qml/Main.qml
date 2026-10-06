@@ -109,6 +109,41 @@ Kirigami.ApplicationWindow {
                     showCloseButton: true
                 }
 
+                // What band the receiver put this cast on, shown only when it
+                // is worth knowing. A group owner chooses the channel and a
+                // television that leaves the group on a social channel puts
+                // the cast on 2.4 GHz, where the full picture will not fit.
+                // Red while that is unanswered, green once it has been, gone
+                // entirely when the link is good.
+                Controls.Button {
+                    id: linkButton
+                    Layout.fillWidth: true
+                    visible: displayBackend.linkTooSlow || displayBackend.linkMatched
+                    enabled: displayBackend.linkTooSlow
+                    icon.name: displayBackend.linkTooSlow ? "network-wireless-signal-weak" : "network-wireless"
+                    text: displayBackend.linkTooSlow
+                          ? "The receiver put this cast on " + displayBackend.linkBand
+                            + " — send what it can carry"
+                          : displayBackend.linkBand + " — sending what this link carries"
+                    onClicked: displayBackend.matchLinkFormat()
+
+                    // Attention while there is something to do, and none once
+                    // it is done: a control that keeps asking for an answer
+                    // already given is noise.
+                    property color attention: displayBackend.linkTooSlow
+                                              ? Kirigami.Theme.negativeTextColor
+                                              : Kirigami.Theme.positiveTextColor
+                    palette.buttonText: attention
+                    opacity: 1.0
+                    SequentialAnimation on opacity {
+                        running: displayBackend.linkTooSlow
+                        loops: Animation.Infinite
+                        alwaysRunToEnd: true
+                        NumberAnimation { to: 0.45; duration: 700; easing.type: Easing.InOutQuad }
+                        NumberAnimation { to: 1.0;  duration: 700; easing.type: Easing.InOutQuad }
+                    }
+                }
+
                 Kirigami.AbstractCard {
                     Layout.fillWidth: true
                     visible: displayBackend.status === "connecting" || displayBackend.status === "streaming"
