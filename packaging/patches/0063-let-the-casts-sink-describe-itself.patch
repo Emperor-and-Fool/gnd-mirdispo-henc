@@ -1,0 +1,63 @@
+From: Mirdispo contributors
+Subject: Let the cast's sink describe itself the way a device does
+
+A bluetooth headphone on this machine carries a session priority of two
+thousand and ten, says plainly that it is not virtual, and says what shape of
+thing it is. The ordinary policy then ranks it, routes to it and moves
+streams onto it without anybody writing a line of code for the occasion.
+
+The sink a cast makes carried none of that. It had no priority at all, so it
+could not be ranked, and it was left to whatever happened to notice a new
+sink had appeared - something that is neither this program nor the session
+manager, writing the default output directly into the shared metadata a
+second after the sink shows up. Being chosen that way works and is nobody's
+decision.
+
+So it now describes itself. Two thousand is above every output built into
+this machine, which are in the hundreds, and below the two thousand and ten
+of a headphone, so a cast takes the sound away from the speakers and leaves
+it with anyone wearing headphones. There is no driver priority because a
+headphone has none.
+
+What is deliberately not copied is the rest of what a headphone carries: the
+smart filter, the loopback group it belongs to, the bluetooth interface
+itself. Those describe a thing the bluetooth module builds around real
+hardware rather than settings that would build one here, and claiming that
+interface would send its policy hunting for a device that does not exist.
+
+diff -ruN a/src/nd-pulseaudio.c b/src/nd-pulseaudio.c
+--- a/src/nd-pulseaudio.c
++++ b/src/nd-pulseaudio.c
+@@ -345,6 +345,32 @@
+                                                    "rate=48000 "
+                                                    "sink_properties=device.class=\"sound\" "
+                                                    "device.icon_name=\"network-wireless\" "
++                                                   /* Described the way a headphone describes
++                                                    * itself, so the ordinary policy can rank and
++                                                    * route this like anything else. A sink that
++                                                    * says nothing is ranked by nothing and left to
++                                                    * whatever happens to notice it.
++                                                    *
++                                                    * Two thousand sits above every output built
++                                                    * into the machine, which are in the hundreds,
++                                                    * and just below the two thousand and ten a
++                                                    * bluetooth headphone carries. So a cast takes
++                                                    * the sound from the speakers, and does not take
++                                                    * it from somebody wearing headphones. There is
++                                                    * no driver priority because a headphone has
++                                                    * none either.
++                                                    *
++                                                    * What is not copied from a headphone is the
++                                                    * smart filter, the loopback group and the
++                                                    * bluetooth interface. Those describe something
++                                                    * the bluetooth module builds around a device
++                                                    * rather than settings that would build one
++                                                    * here, and claiming that interface would send
++                                                    * its policy looking for hardware that is not
++                                                    * there. */
++                                                   "node.virtual=false "
++                                                   "priority.session=2000 "
++                                                   "device.form_factor=\"tv\" "
+                                                    "device.description=\"%s\"",
+                                                    sink_name,
+                                                    self->name);
