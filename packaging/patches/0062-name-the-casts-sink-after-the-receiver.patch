@@ -1,0 +1,122 @@
+From: Mirdispo contributors
+Subject: Name the cast's sink after the receiver rather than after the cast
+
+Whatever elects the default output writes its choice into the shared
+metadata that every client can see, and the session manager keeps what it is
+told. Watched happening: a cast's sink appears, something that is not this
+program and not the session manager writes that sink's name as the default a
+second later, and the session manager writes it down because that is its
+job. Four casts in five minutes left four entries, and the machine's real
+output was pushed to fifth place behind them.
+
+A headphone does the same thing and leaves nothing behind. Its name comes
+from the device, so the next connection writes the same string over the last
+one. Nothing accumulates because nothing is new. The cast's sink was named
+from the identifier of the cast, which is new every time, so every cast was
+a new name, remembered beside all the others, and never written over.
+
+So the sink is named from what the receiver is called. Casting twice to the
+same television now reuses one name and one entry; casting to a different
+one adds a second. The list is as long as the number of televisions rather
+than the number of casts, which is a list that stops growing.
+
+Nothing is asked of whatever is electing the default and no policy is
+fought, which is what the previous attempt at this did by declaring the sink
+virtual and worthless - that changed how the sink behaved when it went quiet
+and stopped the cast with it. This changes a name and nothing else.
+
+The identifier of the cast still names the client and the pipeline elements,
+where being different every time is the whole point of it.
+
+diff -ruN a/src/nd-pulseaudio.c b/src/nd-pulseaudio.c
+--- a/src/nd-pulseaudio.c
++++ b/src/nd-pulseaudio.c
+@@ -46,6 +46,33 @@
+ 
+ static GParamSpec * props[PROP_LAST] = { NULL, };
+ 
++/* The sink is named after the receiver, not after this cast.
++ *
++ * Whatever elects the default output writes its choice into the shared
++ * metadata, and the session manager keeps every distinct name it is told:
++ * a name that is new each time is remembered each time, and a list grows
++ * that nobody reads and nothing prunes. A machine was found whose remembered
++ * output was a cast sink gone for days, with seven more behind it.
++ *
++ * A headphone does not do this, and nothing protects it. Its name comes from
++ * the device, so connecting the same one tomorrow writes the same string
++ * over yesterday's. Nothing accumulates because nothing is new.
++ *
++ * So this is named from what the receiver is called, which does not change
++ * between casts to it, and the list stops at one entry for each television
++ * rather than one for each cast. The identifier of the cast itself still
++ * names the client and the elements, where being different every time is
++ * the point. */
++static gchar *
++nd_pulseaudio_sink_name (NdPulseaudio *self)
++{
++  g_autofree gchar *digest = g_compute_checksum_for_string (G_CHECKSUM_SHA256,
++                                                            self->name ? self->name : "",
++                                                            -1);
++
++  return g_strdup_printf (ND_PA_SINK "_%.8s", digest);
++}
++
+ static void
+ nd_pulseaudio_get_property (GObject    *object,
+                             guint       prop_id,
+@@ -186,7 +213,7 @@
+       return;
+     }
+ 
+-  sink_name = g_strdup_printf (ND_PA_SINK "_%.8s", self->uuid);
++  sink_name = nd_pulseaudio_sink_name (self);
+ 
+   g_debug ("NdPulseaudio: Moving what is playing (%u) to %s", info->index, sink_name);
+   operation = pa_context_move_sink_input_by_name (c, info->index, sink_name, NULL, NULL);
+@@ -246,7 +273,8 @@
+    * control that appeared to do something and did not, which is worse than
+    * leaving it alone. The monitor carries the sound, so the monitor is set. */
+   {
+-    g_autofree gchar *monitor_name = g_strdup_printf (ND_PA_SINK "_%.8s.monitor", self->uuid);
++    g_autofree gchar *monitor_sink = nd_pulseaudio_sink_name (self);
++    g_autofree gchar *monitor_name = g_strdup_printf ("%s.monitor", monitor_sink);
+     pa_operation *volume_operation;
+     pa_cvolume volume;
+ 
+@@ -311,13 +339,14 @@
+   g_debug ("NdPulseaudio: Creating sink for: %s", self->name);
+   /* We have reached the list end without being cancelled first.
+    * This means no screencast sink exist, and we need to create it. */
+-  g_autofree gchar *module_args = g_strdup_printf ("sink_name=" ND_PA_SINK "_%.8s"
++  g_autofree gchar *sink_name = nd_pulseaudio_sink_name (self);
++  g_autofree gchar *module_args = g_strdup_printf ("sink_name=%s"
+                                                    " "
+                                                    "rate=48000 "
+                                                    "sink_properties=device.class=\"sound\" "
+                                                    "device.icon_name=\"network-wireless\" "
+                                                    "device.description=\"%s\"",
+-                                                   self->uuid,
++                                                   sink_name,
+                                                    self->name);
+   /* Release the finished sink-info operation before replacing it. */
+   g_clear_pointer (&self->operation, pa_operation_unref);
+@@ -418,7 +447,7 @@
+           break;
+ 
+         g_debug ("NdPulseaudio: Querying sink info by name");
+-        sink_name = g_strdup_printf (ND_PA_SINK "_%.8s", self->uuid);
++        sink_name = nd_pulseaudio_sink_name (self);
+         self->operation = pa_context_get_sink_info_by_name (self->context,
+                                                             sink_name,
+                                                             on_pa_nd_sink_got_info,
+@@ -612,7 +641,8 @@
+   g_autofree gchar *element_name = g_strdup_printf ("pulseaudio-source-%s", self->uuid);
+   src = gst_element_factory_make ("pulsesrc", element_name);
+ 
+-  g_autofree gchar *device_name = g_strdup_printf (ND_PA_SINK "_%.8s.monitor", self->uuid);
++  g_autofree gchar *source_sink = nd_pulseaudio_sink_name (self);
++  g_autofree gchar *device_name = g_strdup_printf ("%s.monitor", source_sink);
+   g_autofree gchar *client_name = g_strdup_printf ("GNOME Network Displays Audio Grabber for %s", self->name);
+   /* With pulsesrc's default 10 ms period the sound server runs the whole
+    * graph around the sink in periods of 256 samples, which neither this
