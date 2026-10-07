@@ -765,3 +765,82 @@ class LinkBandTests(unittest.TestCase):
         for _ in range(4):
             backend._poll_displays()
         self.assertEqual(len(reads), 1, "a group does not change channel")
+
+
+class TeardownBeforeRestartTests(unittest.TestCase):
+    """Two helpers on one receiver is a collision, so the next cast waits."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QCoreApplication.instance() or QCoreApplication([])
+
+    def make(self, band=p2p.BAND_24):
+        discovery = FakeDiscovery()
+        pending = []
+        backend = DisplayBackend(
+            discovery=discovery,
+            p2p_watcher=FakeP2P(),
+            scheduler=lambda _ms, callback: pending.append(callback),
+            handshake_probe=lambda _since: False,
+            diagnostic_collector=lambda *_: [],
+        )
+        backend._refresh_real_scan()
+        real = p2p.group_band
+        p2p.group_band = lambda: band
+        self.addCleanup(setattr, p2p, "group_band", real)
+        return discovery, backend, pending
+
+    def test_the_next_cast_waits_while_the_last_one_is_still_running(self):
+        discovery, backend, pending = self.make()
+        backend.connectToDevice("/peer/1")
+        backend._poll_displays()
+        discovery.started_uuid = None
+        discovery.unit_active = True          # the old helper is still up
+
+        backend.matchLinkFormat()
+        self.assertIsNone(discovery.started_uuid, "must not start a second helper")
+        self.assertEqual(backend.status, "connecting")
+        self.assertTrue(pending, "it should be waiting rather than giving up")
+
+        # Still up a moment later: still waiting.
+        pending.pop(0)()
+        self.assertIsNone(discovery.started_uuid)
+
+        # Gone: now it starts, and with the slow format.
+        discovery.unit_active = False
+        pending.pop(0)()
+        self.assertEqual(discovery.started_uuid, "/peer/1")
+        self.assertIs(discovery.started_slow, True)
+
+    def test_a_helper_whose_state_is_unknown_counts_as_still_running(self):
+        # Calling unknown "gone" is how a second helper got started beside a
+        # live one before; stream_active's own docstring says so.
+        discovery, backend, pending = self.make()
+        backend.connectToDevice("/peer/1")
+        discovery.started_uuid = None
+        discovery.unit_active = None
+
+        backend.matchLinkFormat()
+        pending.pop(0)()
+        self.assertIsNone(discovery.started_uuid)
+
+    def test_a_cast_that_never_stops_is_not_waited_on_forever(self):
+        discovery, backend, pending = self.make()
+        backend.connectToDevice("/peer/1")
+        discovery.started_uuid = None
+        discovery.unit_active = True
+
+        backend.matchLinkFormat()
+        for _ in range(backend.TEARDOWN_ATTEMPTS + 2):
+            if not pending:
+                break
+            pending.pop(0)()
+        self.assertEqual(discovery.started_uuid, "/peer/1", "it must not hang forever")
+        self.assertIn("did not stop cleanly", backend.errorText)
+
+    def test_nothing_to_wait_for_starts_at_once(self):
+        discovery, backend, pending = self.make()
+        backend._selected_id = "/peer/1"
+        backend._stream_unit = ""
+        backend.matchLinkFormat()
+        self.assertEqual(discovery.started_uuid, "/peer/1")

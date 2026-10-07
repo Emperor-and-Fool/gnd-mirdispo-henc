@@ -42,6 +42,11 @@ def _open_display_settings() -> None:
 
 
 class DisplayBackend(QObject):
+    # How long to wait for a finished cast to actually be gone before
+    # starting the next one, asked every TEARDOWN_POLL_MS milliseconds.
+    TEARDOWN_POLL_MS = 400
+    TEARDOWN_ATTEMPTS = 25
+
     statusChanged = pyqtSignal()
     scanningChanged = pyqtSignal()
     selectedDeviceChanged = pyqtSignal()
@@ -729,12 +734,53 @@ class DisplayBackend(QObject):
         device_id = self._selected_id
         if not device_id:
             return
+        # Captured before disconnecting, which forgets it.
+        unit = self._stream_unit
         # Ending the cast forgets the choice, as it should for any ordinary
         # cast, so the choice is made after that and before the next one.
         self.disconnect()
         self._slow_link = True
         self.linkChanged.emit()
-        self.connectToDevice(device_id)
+        self._set_status("connecting", "Changing to what this link will carry…")
+        self._start_when_torn_down(unit, device_id, self.TEARDOWN_ATTEMPTS)
+
+    def _start_when_torn_down(self, unit: str, device_id: str, left: int):
+        """Start the next cast once the last one has actually gone.
+
+        Ending a cast asks the helper to stop; it does not wait for it. The
+        helper then takes seconds to put down the group, the session with the
+        receiver and its sink, and starting the next one inside that window
+        puts two helpers on one receiver. Both then negotiate, and the one
+        that loses takes the picture with it.
+
+        The sink makes it worse rather than better now that it is named after
+        the receiver: two casts to the same television want the same name, so
+        an overlap is a collision rather than two sinks nobody notices. That
+        name is the right one to have, so the overlap is what has to go.
+
+        A helper whose state cannot be read is treated as still running, for
+        the reason written on stream_active: calling unknown "gone" is how a
+        second helper got started beside a live one before."""
+        if not unit:
+            self.connectToDevice(device_id)
+            return
+
+        active = getattr(self._service, "stream_active", lambda _unit: False)(unit)
+        if active is False:
+            self.connectToDevice(device_id)
+            return
+
+        if left <= 0:
+            # Waited out the budget. Going ahead is still better than leaving
+            # somebody looking at a window that says it is connecting and
+            # never will be, and it is said rather than hidden.
+            # Said after starting, because starting clears the banner.
+            self.connectToDevice(device_id)
+            self._set_error("The last cast did not stop cleanly; starting the next one anyway.")
+            return
+
+        self._schedule(self.TEARDOWN_POLL_MS,
+                       lambda: self._start_when_torn_down(unit, device_id, left - 1))
 
     @pyqtSlot()
     def releaseVirtualScreen(self):
