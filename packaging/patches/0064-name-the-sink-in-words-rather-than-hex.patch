@@ -1,0 +1,76 @@
+From: Mirdispo contributors
+Subject: Name the cast's sink after the receiver in words rather than in hex
+
+Naming the sink after the receiver stopped a new entry being remembered for
+every cast, which was the point of it, and left the name itself unreadable:
+eight characters of a checksum that say nothing to anybody looking at a
+sound panel or a state file.
+
+Which matters more than it sounds. Finding one of these names written into a
+session manager's remembered defaults is how this whole class of problem is
+noticed, and the person finding it should be able to see which television it
+belonged to rather than having to work out what was hashed. Three evenings
+were spent here comparing hexadecimal strings that each stood for the same
+living room television.
+
+So the name is the receiver's name, with everything a sink name may not hold
+turned into an underscore and runs of those collapsed. The television that
+calls itself "[LG] webOS TV UN74006LB" becomes LG_webOS_TV_UN74006LB, which
+is the same every time it is cast to and different from any other receiver,
+exactly as the checksum was, and says what it is.
+
+A receiver that announces nothing usable falls back to the identifier of the
+cast. That is different every time, which is the thing this avoids, so it is
+a last resort rather than a default.
+
+diff -ruN a/src/nd-pulseaudio.c b/src/nd-pulseaudio.c
+--- a/src/nd-pulseaudio.c
++++ b/src/nd-pulseaudio.c
+@@ -66,11 +66,43 @@
+ static gchar *
+ nd_pulseaudio_sink_name (NdPulseaudio *self)
+ {
+-  g_autofree gchar *digest = g_compute_checksum_for_string (G_CHECKSUM_SHA256,
+-                                                            self->name ? self->name : "",
+-                                                            -1);
++  GString *readable = g_string_new (NULL);
++  const gchar *name = self->name ? self->name : "";
++  gboolean last_was_break = TRUE;
+ 
+-  return g_strdup_printf (ND_PA_SINK "_%.8s", digest);
++  /* A sink name may hold letters, digits, dots, underscores and hyphens, and
++   * a receiver is called things like "[LG] webOS TV UN74006LB". Everything
++   * else becomes an underscore, runs of them collapse, and the ends are left
++   * bare, so the name stays something a person reads rather than decodes.
++   * Whoever finds one of these in a state file or a sound panel should be
++   * able to see which television it belonged to without being told. */
++  for (const gchar *c = name; *c; c++)
++    {
++      if (g_ascii_isalnum (*c) || *c == '.' || *c == '-')
++        {
++          g_string_append_c (readable, *c);
++          last_was_break = FALSE;
++        }
++      else if (!last_was_break)
++        {
++          g_string_append_c (readable, '_');
++          last_was_break = TRUE;
++        }
++    }
++
++  while (readable->len > 0 && readable->str[readable->len - 1] == '_')
++    g_string_truncate (readable, readable->len - 1);
++
++  /* A receiver that announces nothing usable still needs a name, and the
++   * cast's own identifier is the only thing left to make one from. It is
++   * different every time, which is the thing this function exists to avoid,
++   * so it is the last resort rather than the default. */
++  if (readable->len == 0)
++    g_string_append_printf (readable, "%.8s", self->uuid ? self->uuid : "unnamed");
++
++  g_autofree gchar *body = g_string_free (readable, FALSE);
++
++  return g_strdup_printf (ND_PA_SINK "_%s", body);
+ }
+ 
+ static void
