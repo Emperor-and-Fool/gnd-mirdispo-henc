@@ -127,20 +127,27 @@ Kirigami.ApplicationWindow {
                           : displayBackend.linkBand + " — sending what this link carries"
                     onClicked: displayBackend.matchLinkFormat()
 
-                    // Attention while there is something to do, and none once
-                    // it is done: a control that keeps asking for an answer
-                    // already given is noise.
-                    property color attention: displayBackend.linkTooSlow
-                                              ? Kirigami.Theme.negativeTextColor
-                                              : Kirigami.Theme.positiveTextColor
-                    palette.buttonText: attention
-                    opacity: 1.0
-                    SequentialAnimation on opacity {
-                        running: displayBackend.linkTooSlow
-                        loops: Animation.Infinite
-                        alwaysRunToEnd: true
-                        NumberAnimation { to: 0.45; duration: 700; easing.type: Easing.InOutQuad }
-                        NumberAnimation { to: 1.0;  duration: 700; easing.type: Easing.InOutQuad }
+                    // Colour laid over the button rather than taken out of
+                    // its text: a tint reads as a state the whole control is
+                    // in, and the label stays the colour the desktop chose
+                    // for labels. Red while there is something to do, green
+                    // once it has been done, and the pulsing stops with it -
+                    // a control that keeps asking for an answer already given
+                    // is noise.
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: Kirigami.Units.smallSpacing
+                        color: displayBackend.linkTooSlow
+                               ? Kirigami.Theme.negativeTextColor
+                               : Kirigami.Theme.positiveTextColor
+                        opacity: displayBackend.linkTooSlow ? 0.4 : 0.22
+                        SequentialAnimation on opacity {
+                            running: displayBackend.linkTooSlow
+                            loops: Animation.Infinite
+                            alwaysRunToEnd: true
+                            NumberAnimation { to: 0.12; duration: 700; easing.type: Easing.InOutQuad }
+                            NumberAnimation { to: 0.40; duration: 700; easing.type: Easing.InOutQuad }
+                        }
                     }
                 }
 
