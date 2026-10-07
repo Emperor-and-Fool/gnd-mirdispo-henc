@@ -844,3 +844,56 @@ class TeardownBeforeRestartTests(unittest.TestCase):
         backend._stream_unit = ""
         backend.matchLinkFormat()
         self.assertEqual(discovery.started_uuid, "/peer/1")
+
+
+class FormatSurvivesRetryTests(unittest.TestCase):
+    """A retry that forgets the format puts the cast back on what the link
+    could not carry, which is how the switch appeared to work and did not."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QCoreApplication.instance() or QCoreApplication([])
+
+    def make(self):
+        discovery = FakeDiscovery()
+        watcher = FakeP2P()
+        backend = DisplayBackend(
+            discovery=discovery,
+            p2p_watcher=watcher,
+            scheduler=lambda _ms, callback: callback(),
+            handshake_probe=lambda _since: False,
+            diagnostic_collector=lambda *_: [],
+        )
+        backend._refresh_real_scan()
+        return discovery, watcher, backend
+
+    def test_a_scheduled_retry_keeps_the_slow_format(self):
+        discovery, _watcher, backend = self.make()
+        backend.connectToDevice("/peer/1")
+        backend._slow_link = True
+        backend._stream_unit = ""
+        discovery.started_slow = None
+
+        backend._start_retry(backend._reconnects, "Test TV")
+        self.assertIs(discovery.started_slow, True)
+
+    def test_a_dropped_link_retry_keeps_the_slow_format(self):
+        discovery, watcher, backend = self.make()
+        backend.connectToDevice("/peer/1")
+        backend._slow_link = True
+        backend._stream_seen_active = True
+        discovery.started_slow = None
+
+        discovery.unit_active = False
+        backend._poll_displays()
+        self.assertIs(discovery.started_slow, True)
+
+    def test_an_ordinary_retry_still_asks_for_the_full_picture(self):
+        discovery, _watcher, backend = self.make()
+        backend.connectToDevice("/peer/1")
+        self.assertIs(backend._slow_link, False)
+        backend._stream_unit = ""
+        discovery.started_slow = None
+
+        backend._start_retry(backend._reconnects, "Test TV")
+        self.assertIs(discovery.started_slow, False)

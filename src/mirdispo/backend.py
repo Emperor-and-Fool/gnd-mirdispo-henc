@@ -491,7 +491,11 @@ class DisplayBackend(QObject):
             return
         try:
             self._attempt_started = time.time()
-            self._stream_unit = self._service.start_stream(self._selected_id)
+            # Carries the format with it. A retry that forgot it put the cast
+            # back on what the link could not carry, which is how asking for
+            # the gentler one appeared to work and then did not.
+            self._stream_unit = self._service.start_stream(self._selected_id, False,
+                                                           self._slow_link)
             if not self._stream_unit:
                 raise RuntimeError("The streaming service did not start")
         except Exception as error:
@@ -525,7 +529,9 @@ class DisplayBackend(QObject):
                 self._last_state = None
                 self._set_status("connecting", f"Retrying {self._selected}…")
                 try:
-                    self._stream_unit = self._service.start_stream(self._selected_id)
+                    # The format travels with the retry, as above.
+                    self._stream_unit = self._service.start_stream(self._selected_id, False,
+                                                                   self._slow_link)
                 except Exception as error:
                     self._stream_unit = ""
                     self._set_error(str(error))
