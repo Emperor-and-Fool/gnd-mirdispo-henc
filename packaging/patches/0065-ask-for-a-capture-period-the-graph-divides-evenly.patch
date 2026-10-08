@@ -1,0 +1,66 @@
+From: Mirdispo contributors
+Subject: Ask for a capture period the graph divides evenly
+
+The sound a cast sends is taken from the monitor of its own sink, and the
+period it is taken in was set to a round forty milliseconds. At the rate
+everything here runs that is 1920 samples, while the graph around it runs in
+1024, and one is not a multiple of the other: every cycle of the capture
+straddles two of the sink's and begins on the boundary of neither.
+
+Nothing fails. Neither node records a single late or missed cycle, and both
+spend well under a thousandth of the time they are given. What is left is the
+converter between them realigning continuously, which is not counted
+anywhere and is heard as a crackle under sound that is otherwise clean.
+
+Two thousand and forty-eight samples is exactly two of the graph's cycles and
+two and a half milliseconds longer than what was asked for before, so the
+reason the period was lengthened in the first place still stands: it is far
+above the ten milliseconds that had the graph running in periods of 256 and
+underrunning at both ends.
+
+This asks for a period that divides and does not insist that the graph keep
+the size it has. The graph's size is negotiated, and holding it still would
+hold it still for everything on the machine - which is too much to take from
+somebody's audio work for the sake of a cast.
+
+diff -ruN a/src/nd-pulseaudio.c b/src/nd-pulseaudio.c
+--- a/src/nd-pulseaudio.c
++++ b/src/nd-pulseaudio.c
+@@ -705,15 +705,32 @@
+   /* With pulsesrc's default 10 ms period the sound server runs the whole
+    * graph around the sink in periods of 256 samples, which neither this
+    * source nor the players feeding the sink keep up with: both record
+-   * underruns, heard as a stutter on the receiver. A 40 ms period lets the
+-   * graph run at the period players already ask for, and costs nothing
+-   * next to the latency of the stream itself. */
++   * underruns, heard as a stutter on the receiver. A period of about forty
++   * milliseconds lets the graph run at the period players already ask for,
++   * and costs nothing next to the latency of the stream itself.
++   *
++   * 42667 microseconds rather than a round 40000, because what matters is
++   * not the length of the period but how it divides. At the rate this runs,
++   * forty milliseconds is 1920 samples against a graph of 1024, which is one
++   * and seven eighths: every cycle of this source straddles two of the
++   * sink's and lands on the boundary of neither, so what sits between them
++   * is forever realigning. Nothing fails and nothing is counted as late; it
++   * is heard rather than measured, as a crackle under sound that is
++   * otherwise clean. 2048 samples is exactly two, and two and a half
++   * milliseconds longer than before.
++   *
++   * It holds while the graph runs at 1024, which is what it does here and
++   * what it is not promised to do: another client may negotiate it
++   * elsewhere. Pinning it would mean pinning the graph for everything on the
++   * machine, which is too much to ask of somebody's audio work for the sake
++   * of a cast, so this asks for the right period and does not insist on the
++   * world around it. */
+   g_object_set (src,
+                 "device", device_name,
+                 "client-name", client_name,
+                 "do-timestamp", TRUE,
+-                "latency-time", (gint64) 40000,
+-                "buffer-time", (gint64) 400000,
++                "latency-time", (gint64) 42667,
++                "buffer-time", (gint64) 426670,
+                 "server", pa_context_get_server (self->context),
+                 NULL);
+ 
